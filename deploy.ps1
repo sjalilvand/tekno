@@ -1,5 +1,9 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۶)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۷)
+#  تغییرات ۵.۷: حالت import ابتدا کد مخزن را از GitHub به‌روزرسانی می‌کند
+#  (دیگر هیچ‌وقت با deploy.ps1/importer قدیمی اجرا نمی‌شود) + تست واقعی
+#  بارگذاری better-sqlite3/mysql2 با require (نه فقط وجود پوشهٔ ناقص) +
+#  اجرای npm install همیشه داخل پوشهٔ سامانه + اسکریپت‌های .mts بدون هشدار node
 #  تغییرات ۵.۶: همگام‌سازی خودکار deploy.ps1 اجراکننده با نسخهٔ مخزن +
 #  بازگردانی خودکار وابستگی‌های انتقال داده (better-sqlite3/mysql2) قبل از import
 #  تغییرات ۵.۳: توقف نمونهٔ در حال اجرا «قبل از build» — رفع خطای
@@ -121,13 +125,13 @@ function Assert-Prerequisites {
   Write-Ok "Node.js v$major"
   if (-not (Test-Command npm)) { Write-Fail "npm یافت نشد — همراه Node.js نصب می‌شود" }
   Write-Ok "npm"
-  if ($Mode -in @("install","update")) {
+  if ($Mode -in @("install","update","import")) {
     if (-not (Test-Command git)) { Write-Fail "Git نصب نیست. نصب کنید: winget install Git.Git" }
     Write-Ok "git"
   }
   if ($DbEngine -eq "mysql" -and $Mode -in @("install","import")) {
     if (-not (Test-Command mysql)) {
-      Write-Warn2 "کلاینت mysql در PATH نیست — ساخت دیتابیس باید از قبل انجام شده باشد"
+      Write-Warn2 "کلاینت mysql در PATH نیست — ساخت/بازسازی ساختار به‌طور خودکار با prisma db push انجام می‌شود"
     }
   }
 }
@@ -303,31 +307,38 @@ function Invoke-PrismaSetup {
 # ------------------------------------------------------------- انتقال داده
 function Invoke-DataImport {
   if ($DbEngine -ne "mysql") { Write-Warn2 "انتقال داده فقط در حالت mysql معنا دارد"; return }
-  # وابستگی‌های انتقال داده (better-sqlite3/mysql2) در devDependencies اند و ممکن است
-  # توسط npm قبلی حذف شده باشند — در صورت نبود، قبل از انتقال بازگردانی می‌شوند
-  $needRestore = $false
-  foreach ($dep in @("better-sqlite3", "mysql2")) {
-    if (-not (Test-Path (Join-Path $InstallDir "node_modules\$dep"))) { $needRestore = $true }
-  }
-  if ($needRestore) {
-    Write-Warn2 "وابستگی‌های انتقال داده (better-sqlite3/mysql2) در node_modules نیست — بازگردانی…"
-    Invoke-Native { npm install --no-audit --no-fund --include=dev 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
-    if ($LASTEXITCODE -ne 0) { Write-Fail "بازگردانی وابستگی‌ها ناموفق بود — در پوشهٔ سامانه دستی «npm install --include=dev» اجرا کنید" }
-    Write-Ok "وابستگی‌های انتقال داده بازگردانی شدند"
-  }
   $src = Get-SqlitePath
   if (-not (Test-Path $src)) { Write-Warn2 "پشتیبان SQLite پیدا نشد: $src — انتقال رد شد"; return }
   Write-Step "انتقال داده از SQLite به MySQL"
   Write-Host "  مبدأ: $src ($([math]::Round((Get-Item $src).Length/1GB,2)) گیگابایت)" -ForegroundColor DarkGray
   Push-Location $InstallDir
-  # Node 23+ فایل‌های TS را خودش اجرا می‌کند — بدون دانلود tsx و بدون نیاز به اینترنت
-  if ((Get-NodeMajor) -ge 23) {
-    Invoke-Native { node prisma/import-sqlite-to-mysql.ts --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
-  } else {
-    Invoke-Native { npx --yes tsx prisma/import-sqlite-to-mysql.ts --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+  try {
+    # وابستگی‌های انتقال داده (better-sqlite3/mysql2) در devDependencies اند و ممکن است
+    # توسط اجرای قبلی npm حذف یا ناقص مانده باشند — با require واقعی تست می‌شوند
+    # (نه فقط وجود پوشه)؛ در صورت خرابی، قبل از انتقال بازگردانی می‌شوند.
+    # npm هم داخل پوشهٔ سامانه اجرا می‌شود — نه پوشهٔ جاریِ کاربر
+    Invoke-Native { node -e "require('better-sqlite3'); require('mysql2')" 2>$null }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warn2 "وابستگی‌های انتقال داده (better-sqlite3/mysql2) قابل بارگذاری نیستند — بازگردانی…"
+      Invoke-Native { npm install --no-audit --no-fund --include=dev 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+      if ($LASTEXITCODE -ne 0) { Write-Fail "بازگردانی وابستگی‌ها ناموفق بود — در پوشهٔ سامانه دستی «npm install --include=dev» اجرا کنید" }
+      Invoke-Native { node -e "require('better-sqlite3'); require('mysql2')" 2>$null }
+      if ($LASTEXITCODE -ne 0) { Write-Fail "پس از نصب هم better-sqlite3/mysql2 بارگذاری نشد — خروجی npm را بررسی کنید" }
+      Write-Ok "وابستگی‌های انتقال داده بازگردانی شدند"
+    }
+    # اسکریپت انتقال — نسخهٔ .mts (ESM صریح، بدون هشدار MODULE_TYPELESS) با fallback به .ts قدیمی
+    $importer = "prisma/import-sqlite-to-mysql.mts"
+    if (-not (Test-Path $importer)) { $importer = "prisma/import-sqlite-to-mysql.ts" }
+    # Node 23+ فایل‌های TS را خودش اجرا می‌کند — بدون دانلود tsx و بدون نیاز به اینترنت
+    if ((Get-NodeMajor) -ge 23) {
+      Invoke-Native { node $importer --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    } else {
+      Invoke-Native { npx --yes tsx $importer --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    }
+    if ($LASTEXITCODE -ne 0) { Write-Fail "انتقال داده ناموفق بود — پس از رفع مشکل با --resume ادامه دهید" }
+  } finally {
+    Pop-Location
   }
-  if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "انتقال داده ناموفق بود — پس از رفع مشکل با --resume ادامه دهید" }
-  Pop-Location
   Write-Ok "انتقال داده کامل شد (وضعیت: $DataDir\import_status.json)"
 }
 
@@ -335,16 +346,19 @@ function Invoke-DataImport {
 function Invoke-SeedAdmin {
   Write-Step "ایجاد/به‌روزرسانی حساب‌های مدیریتی (admin)"
   Push-Location $InstallDir
+  # نسخهٔ .mts (ESM صریح) با fallback به .ts قدیمی
+  $seedScript = "prisma/seed-admin.mts"
+  if (-not (Test-Path $seedScript)) { $seedScript = "prisma/seed-admin.ts" }
   $code = 1
   # Node 23+ فایل‌های TS را خودش اجرا می‌کند — بدون دانلود tsx و بدون نیاز به اینترنت
   if ((Get-NodeMajor) -ge 23) {
-    Invoke-Native { node prisma/seed-admin.ts 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    Invoke-Native { node $seedScript 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
     $code = $LASTEXITCODE
   }
   if ($code -ne 0) {
     # جایگزین: tsx محلی (--yes تا در پرسش «Ok to proceed?» متوقف نماند)
     Write-Warn2 "اجرای مستقیم با node ممکن نشد — تلاش با tsx محلی…"
-    Invoke-Native { npx --yes tsx prisma/seed-admin.ts 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    Invoke-Native { npx --yes tsx $seedScript 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
     $code = $LASTEXITCODE
   }
   Pop-Location
@@ -506,7 +520,7 @@ switch ($Mode) {
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۶" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۷" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {
@@ -527,5 +541,15 @@ switch ($Mode) {
   "stop"    { Stop-App }
   "restart" { Stop-App; Start-App }
   "status"  { Show-Status }
-  "import"  { Write-DotEnv; if ($DbEngine -eq "mysql") { Invoke-MysqlSchemaSync -AllowReset }; Invoke-DataImport; Invoke-SeedAdmin }
+  "import"  {
+    # کد مخزن ابتدا از GitHub به‌روزرسانی می‌شود — تا importr/اسکیما همیشه جدید باشند؛
+    # اگر اینترنت در دسترس نباشد، با کد محلی ادامه می‌دهد (رفتار Get-Source)
+    Get-Source
+    Write-DotEnv
+    if ($DbEngine -eq "mysql") { Invoke-MysqlSchemaSync -AllowReset }
+    Invoke-DataImport
+    Invoke-SeedAdmin
+    Write-Host ""
+    Write-Host "  مرحلهٔ بعد: .\deploy.ps1 -Mode update -DbEngine mysql  (ساخت و اجرای مجدد سامانه)" -ForegroundColor Magenta
+  }
 }

@@ -8,7 +8,7 @@
 - پنل «یکپارچه‌سازی‌ها» (`src/views/integrations.tsx` + `src/app/api/integrations/`)
 - پیامک واقعی: `src/lib/sms/` (کاوه‌نگار، SMS.ir، ملی پیامک، پنل سها، شبیه‌ساز) — صف جدول SMS
 - وب‌سرویس سها: `src/lib/soha/` — کلاینت + همگام‌سازی بیماران/ارجاعات با cursor و SyncLogs
-- انتقال داده SQLite→MySQL: `prisma/import-sqlite-to-mysql.ts` (دسته‌ای، resume، وضعیت در import_status.json)
+- انتقال داده SQLite→MySQL: `prisma/import-sqlite-to-mysql.mts` (دسته‌ای، resume، وضعیت در import_status.json)
 - استقرار ویندوز: `deploy.ps1` (install/update/start/stop/restart/status/import + -AutoStart)
 - اسکریپت‌های npm: db:push:mysql / db:generate:mysql / db:import:mysql / seed
 - build چندسکویی: `scripts/copy-standalone.mjs` (جایگزین cp -r) و start با node
