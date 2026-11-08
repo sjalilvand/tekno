@@ -123,6 +123,7 @@ Register-ScheduledTask -TaskName "RZ-SmsQueue" -Action $act -Trigger $trg -Force
 | مشکل | راه‌حل |
 |---|---|
 | در مرحلهٔ «حساب‌های مدیریتی» در پرسش `Need to install … tsx` می‌ایستد | نسخهٔ ۵.۲ اسکریپت، TS را با خود Node اجرا می‌کند و دیگر نیازی به دانلود tsx ندارد. `deploy.ps1` را به‌روزرسانی کنید (یک بار دیگر اجرا کنید). در قدیم: `y` بزنید یا Ctrl+C و سپس `npm run seed:admin`. |
+| در مرحلهٔ build خطای `EPERM: operation not permitted, unlink …query_engine-windows.dll.node` | نسخهٔ قدیمی سامانه هنوز در پس‌زمینه در حال اجراست و فایل Prisma را قفل کرده است. نسخهٔ ۵.۳ اسکریپت، خودش قبل از build نمونهٔ در حال اجرا را متوقف می‌کند (`Stop-App -Quiet`). برای یک‌بار دستی: `Get-Process node -ErrorAction SilentlyContinue \| Stop-Process -Force` و سپس اجرای مجدد deploy. |
 | بعد از یک اجرا، `npm install` می‌گوید «removed 344 packages» | علت آن بود که `NODE_ENV=production` از اجرای قبلی در سشن PowerShell مانده بود و npm وابستگی‌های dev را حذف می‌کرد؛ نسخهٔ ۵.۲ با `--include=dev` و پاک‌سازی خودکار این را برطرف می‌کند. (این بسته‌ها برای build و انتقال داده لازم‌اند.) |
 | ورود با admin/123456 نمی‌شود | `npm run seed:admin` را در پوشهٔ سامانه اجرا کنید و سرویس را ری‌استارت نکنید (لازم نیست)؛ اگر بازهم نشد، `DATABASE_URL` در `.env` را با دیتابیس فعلی مقایسه کنید. |
 | MySQL در XAMPP بالا نمی‌آید (پورت 3306 اشغال است) | عادی است — سرویس `MySQL Server 8.x` ویندوز خودش روی 3306 فعال است و همان استفاده می‌شود؛ MySQL داخل XAMPP را Start نکنید. |
