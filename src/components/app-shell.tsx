@@ -8,7 +8,7 @@ import {
   LayoutDashboard, BarChart3, CalendarCheck, Users2, CalendarClock, ArrowLeftRight,
   Inbox, Siren, Users, Building2, ShieldCheck, FileSignature, Target, Wallet, Receipt,
   MessageSquareText, Mail, CalendarHeart, ScrollText, LifeBuoy, Settings, BookOpen,
-  ChevronsLeft, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search,
+  ChevronsLeft, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search, PlugZap,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,7 @@ const NAV: NavGroup[] = [
     { key: "occasions", label: "مناسبت‌ها", icon: CalendarHeart },
   ]},
   { label: "سیستم", items: [
+    { key: "integrations", label: "یکپارچه‌سازی‌ها", icon: PlugZap },
     { key: "logs", label: "لاگ فعالیت", icon: ScrollText },
     { key: "tickets", label: "تیکت پشتیبانی", icon: LifeBuoy },
     { key: "settings", label: "تنظیمات سامانه", icon: Settings },

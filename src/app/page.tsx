@@ -24,6 +24,7 @@ import { OccasionsView } from "@/views/occasions";
 import { LogsView } from "@/views/logs";
 import { TicketsView } from "@/views/tickets";
 import { SettingsView } from "@/views/settings";
+import { IntegrationsView } from "@/views/integrations";
 import { HelpsView } from "@/views/helps";
 import { ProfileView } from "@/views/profile";
 import { api, useHashRoute } from "@/lib/client";
@@ -104,6 +105,7 @@ function ShellWithRouter({
       case "logs": return <LogsView />;
       case "tickets": return <TicketsView />;
       case "settings": return <SettingsView />;
+      case "integrations": return <IntegrationsView />;
       case "helps": return <HelpsView />;
       case "profile": return <ProfileView user={user} refreshMe={refreshMe} />;
       default: return <DashboardView />;

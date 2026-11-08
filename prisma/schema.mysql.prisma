@@ -931,3 +931,23 @@ model ApiReport {
 
   @@map("ApiReports")
 }
+
+// ---------------------------------------------------------------------
+// یکپارچه‌سازی‌ها — ثبت اجرای عملیات وب‌سرویس سها و پیامک واقعی
+// ---------------------------------------------------------------------
+
+model SyncLog {
+  id         Int      @id @default(autoincrement())
+  service    String   // SOHA | SMS | ...
+  entity     String   // Patients | Referrals | Services | Queue
+  direction  String   @default("IN") // IN (دریافت از سها) | OUT (ارسال به سها)
+  status     String   @default("در حال اجرا") // در حال اجرا | موفق | ناموفق
+  records    Int      @default(0)
+  cursor     String?  // نشانگر افزایشی — آخرین زمان/شناسه همگام‌سازی
+  message    String?  // خلاصه یا پیام خطا
+  duration   Int?     // مدت اجرا (میلی‌ثانیه)
+  createTime DateTime @default(now())
+
+  @@index([service, entity, createTime])
+  @@map("SyncLogs")
+}

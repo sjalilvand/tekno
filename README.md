@@ -1,8 +1,8 @@
-# سامانه مراکز خدمات روانشناسی و مشاوره «راه زندگی» — نسخه ۵.۰
+# سامانه مراکز خدمات روانشناسی و مشاوره «راه زندگی» — نسخه ۵.۱
 
 بازنویسی کامل و مدرن سامانه مدیریت مراکز خدمات روانشناسی و مشاوره با تمرکز بر **تجربه کاربری (UX)** و **رابط کاربری (UI)** بهتر، سریع‌تر و قابل‌فهم‌تر.
 
-> ⚠️ این مخزن **کد را شامل نمی‌شود** — کد کامل پس از بازبینی منتشر می‌شود.
+> نسخه ۵.۱: پنل **یکپارچه‌سازی‌ها** (پیامک واقعی + وب‌سرویس سها)، اتصال به **MySQL واقعی** و اسکریپت استقرار خودکار روی ویندوز (`deploy.ps1`) اضافه شد.
 
 ## ✨ تغییرات نسبت به نسخه قبلی
 
@@ -36,6 +36,7 @@
 - **مالیات مشاوران** — دوره‌ای ماهانه با نرخ مؤثر
 - **پیامک‌ها** — گزارش وضعیت و ارسال گروهی بر اساس نقش/استان
 - **پیام‌های داخلی** — صندوق ورودی/ارسالی با ستاره‌گذاری
+- **یکپارچه‌سازی‌ها (جدید)** — پیکربندی پیامک واقعی، وب‌سرویس سها، ارسال صف و تاریخچه همگام‌سازی
 - **لاگ فعالیت** — سطح‌بندی اطلاعات/هشدار/خطا
 - **تنظیمات، مناسبت‌ها، تیکت پشتیبانی و راهنما**
 
@@ -45,6 +46,20 @@
 - **Tailwind CSS 4** + **shadcn/ui** + فونت **وزیرمتن**
 - **Prisma ORM** (SQLite برای توسعه / MySQL برای تولید)
 - **Recharts** برای نمودارها + **next-themes** برای تم تیره/روشن
+- **پیامک واقعی** — کاوه‌نگار / SMS.ir / ملی پیامک / پنل سها (صف خروجی با تلاش مجدد)
+- **وب‌سرویس سها** — کلاینت HTTP با احراز هویت، نشانگر افزایشی و لاگ همگام‌سازی
+
+## 📜 دستورهای npm
+
+| دستور | کار |
+|---|---|
+| `npm run dev` | اجرای محیط توسعه |
+| `npm run build` / `npm run start` | ساخت و اجرای نسخهٔ تولیدی (چندسکویی) |
+| `npm run db:push` | اعمال اسکیما روی SQLite |
+| `npm run db:push:mysql` | اعمال اسکیما روی MySQL واقعی |
+| `npm run db:generate:mysql` | تولید Prisma Client برای MySQL |
+| `npm run db:import:mysql` | انتقال دادهٔ SQLite → MySQL (پشتیبان حجیم) |
+| `npm run seed` | دادهٔ نمونه |
 
 ## 🚀 راه‌اندازی
 
@@ -76,33 +91,64 @@ bun run dev   # http://localhost:3000
 
 > در داده نمونه، نام کاربری بقیه کاربران برابر کد ملی است.
 
-## 🐬 استقرار روی MySQL واقعی
+## 🐬 اتصال به MySQL واقعی
 
 اسکیمای Prisma عمداً با انواع پرتابل نوشته شده تا با تغییر فقط provider روی MySQL واقعی مستقر شود:
 
 ```bash
-# ۱) فایل .env پروduktion:
+# ۱) فایل .env تولید:
 DATABASE_URL="mysql://USER:PASS@HOST:3306/DBNAME"
 
-# ۲) استفاده از اسکیمای MySQL:
-cp prisma/schema.mysql.prisma prisma/schema.prisma   # یا:
-prisma db push --schema prisma/schema.mysql.prisma
+# ۲) ایجاد/به‌روزرسانی جداول با اسکیمای MySQL:
+npm run db:push:mysql
+# (معادل: prisma db push --schema prisma/schema.mysql.prisma)
+
+# ۳) تولید Prisma Client برای MySQL (قبل از npm run build):
+npm run db:generate:mysql
+
+# ۴) انتقال داده از پشتیبان SQLite (مثلاً app.sqlite حدود ۱.۵ گیگابایت):
+npm run db:import:mysql -- --source "D:\Projects\rahe_zendegi\data\app.sqlite" \
+     --mysql "mysql://USER:PASS@HOST:3306/DBNAME" --mode truncate --resume
 ```
 
 ساختار جداول (Users، Events، Centers، Referrs، EventsEms، ConsultantTax، ...) آینه‌ای از بکاپ واقعی `app2_backup` است؛ فیلدهای JSON به String و Decimal به Float نگاشت شده تا بین دو دیتابیس سازگار بماند.
 
+## 🪟 استقرار خودکار روی ویندوز (PowerShell)
+
+```powershell
+# استقرار کامل: کلون + نصب + دیتابیس MySQL + انتقال پشتیبان + build + اجرا
+.\deploy.ps1 -Mode install -DbEngine mysql -DataDir "D:\Projects\rahe_zendegi\data" -ImportSqlite
+```
+
+حالت‌های دیگر: `update` (به‌روزرسانی از گیت)، `start/stop/restart`، `status`، `import` (فقط انتقال داده).
+راهنمای کامل و پیش‌نیازها: [docs/DEPLOY-MYSQL.md](docs/DEPLOY-MYSQL.md)
+
+## 🔗 یکپارچه‌سازی‌ها
+
+- **پیامک واقعی** (`src/lib/sms/`) — صف پیامک جدول SMS (وضعیت «در صف») با سرویس‌دهندهٔ انتخابی ارسال می‌شود؛ وضعیت، پاسخ خام و تعداد تلاش در همان جدول ثبت می‌گردد. پیکربندی از پنل «یکپارچه‌سازی‌ها» یا متغیرهای محیطی `SMS_*`.
+- **وب‌سرویس سها** (`src/lib/soha/`) — همگام‌سازی تدریجی بیماران و ارجاعات با نشانگر افزایشی (cursor) و لاگ کامل در جدول SyncLogs. نقاطی که باید با منطق PHP فعلی تطبیق داده شوند در `docs/PHP-MIGRATION.md` فهرست شده‌اند.
+- اجرای دوره‌ای صف پیامک با Task Scheduler ویندوز یا cron:
+  ```powershell
+  # هر ۲ دقیقه — نمونه:
+  curl -s -X POST http://localhost:3000/api/integrations/run -H "Content-Type: application/json" -d '{"action":"sms-dispatch","limit":200}'
+  ```
+
 ## 📁 ساختار
 
 ```
-prisma/            اسکیما (SQLite/MySQL) + Seed
-src/app/api/       API Route ها (auth, dashboard, events, ...)
+prisma/            اسکیما (SQLite/MySQL) + Seed + اسکریپت انتقال داده به MySQL
+deploy.ps1         استقرار خودکار روی ویندوز (نصب/به‌روزرسانی/اجرا/انتقال داده)
+src/app/api/       API Route ها (auth, dashboard, events, integrations, ...)
 src/components/    پوسته اپ، کامپوننت‌های مشترک و نمودارها
-src/views/         ۲۳ نمای ماژول (داشبورد تا تنظیمات)
-src/lib/           تاریخ شمسی، احراز هویت، کلاینت API
+src/views/         ۲۴ نمای ماژول (داشبورد تا یکپارچه‌سازی‌ها)
+src/lib/sms/       پیامک واقعی — سرویس‌دهنده‌ها و صف ارسال
+src/lib/soha/      وب‌سرویس سها — کلاینت و همگام‌سازی
+docs/              راهنمای استقرار MySQL و برنامهٔ انتقال منطق PHP
 ```
 
 ## 🔐 نکات امنیتی
 
 - رمزها با scrypt هش می‌شوند؛ نشست‌ها در جدول `Sessions` با کوکی httpOnly نگهداری می‌شوند.
 - زنجیره تایید جلسات بر اساس نقش کاربر کنترل می‌شود.
+- کلیدهای سرویس‌های خارجی (پیامک/سها) فقط در جدول `Settings` یا `.env` نگهداری می‌شوند و در پنل با ماسک نمایش داده می‌شوند.
 - قبل از استقرار واقعی، اتصال به دیتابیس MySQL موجود و انتقال کاربران بررسی شود.
