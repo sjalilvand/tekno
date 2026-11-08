@@ -17,6 +17,7 @@ db/*.db-journal
 # env
 .env
 .env*.local
+.env.bak-*
 
 # logs
 dev.log

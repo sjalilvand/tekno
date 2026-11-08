@@ -166,6 +166,19 @@ PORT="$AppPort"
   if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null; Write-Ok "پوشهٔ داده ساخته شد: $DataDir" }
 }
 
+# آیا فایل .env موجود با موتور درخواستی سازگار است؟
+function Test-EnvMatches {
+  $envPath = Join-Path $InstallDir ".env"
+  if (-not (Test-Path $envPath)) { return $false }
+  $content = Get-Content $envPath -Raw -ErrorAction SilentlyContinue
+  if (-not $content) { return $false }
+  $m = [regex]::Match($content, 'DATABASE_URL\s*=\s*"?([^"\r\n]+)"?')
+  if (-not $m.Success) { return $false }
+  $url = $m.Groups[1].Value.Trim()
+  if ($DbEngine -eq "mysql") { return ($url -like "mysql://*" -or $url -like "mariadb://*") }
+  return ($url -like "file:*")
+}
+
 # ------------------------------------------------------------- نصب و ساخت دیتابیس
 function Install-Dependencies {
   Write-Step "نصب وابستگی‌ها (npm install) — چند دقیقه طول می‌کشد"
@@ -323,6 +336,7 @@ switch ($Mode) {
     if ($ImportSqlite) { Invoke-DataImport }
     Invoke-SeedAdmin
     Invoke-Build
+    Stop-App
     Start-App
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
@@ -332,6 +346,11 @@ switch ($Mode) {
   }
   "update" {
     Get-Source
+    # git reset ممکن است .env داخل مخزن را برگرداند — اگر با موتور درخواستی ناسازگار است، بازسازی شود
+    if (-not (Test-EnvMatches)) {
+      Write-Warn2 "فایل .env نامعتبر یا ناسازگار با موتور $DbEngine بود — بازسازی می‌شود"
+      Write-DotEnv
+    }
     Install-Dependencies
     Invoke-PrismaSetup
     Invoke-SeedAdmin
