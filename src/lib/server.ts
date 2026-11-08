@@ -64,7 +64,8 @@ export function getSessionToken(req: NextRequest): string | null {
 export async function getCurrentUser(req: NextRequest) {
   const token = getSessionToken(req);
   if (!token) return null;
-  const session = await db.session.findUnique({ where: { token }, include: { user: true } });
+  // findFirst — توکن دیگر یونیک نیست (دادهٔ legacy توکن تکراری دارد)
+  const session = await db.session.findFirst({ where: { token }, include: { user: true } });
   if (!session) return null;
   return session.user;
 }

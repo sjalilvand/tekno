@@ -167,11 +167,13 @@ model Session {
   id       String   @id @default(cuid())
   userId   Int
   user     User     @relation(fields: [userId], references: [id])
-  token    String   @unique
+  // یونیک حذف شد — دادهٔ legacy توکن تکراری/خالی دارد (انتقال SQLite→MySQL)
+  token    String
   ip       String?
   browser  String?
   dateTime DateTime @default(now())
 
+  @@index([token])
   @@map("Sessions")
 }
 
@@ -372,7 +374,8 @@ model Event {
   userId         Int
   user           User      @relation("EventClient", fields: [userId], references: [id])
   nid            BigInt
-  trackingCode   Int?      @unique
+  // یونیک حذف شد — دادهٔ legacy کد رهگیری تکراری (مثل 0) دارد
+  trackingCode   Int?
   centerId       Int
   center         Center    @relation(fields: [centerId], references: [id])
   serviceId      Int
@@ -426,9 +429,10 @@ model Event {
   comments     EventComment[]
   reserves     EventReserve[]
   psychology   EventPsychology?
-  neuroFeedback EventNeuroFeedback?
-  headMap      EventHeadMap?
-  ems          EventsEms?
+  // روابط یک‌به‌چند — در دادهٔ legacy چند فرم برای یک جلسه ثبت شده است
+  neuroFeedback EventNeuroFeedback[]
+  headMap      EventHeadMap[]
+  ems          EventsEms[]
   medicines    EventMedicine[]
   disorders    EventDisorder[]
 
@@ -438,6 +442,7 @@ model Event {
   @@index([status])
   @@index([serviceId])
   @@index([centerId])
+  @@index([trackingCode])
   @@map("Events")
 }
 
@@ -507,7 +512,7 @@ model EventPsychology {
 
 model EventNeuroFeedback {
   id             Int      @id @default(autoincrement())
-  eventId        Int      @unique
+  eventId        Int
   event          Event    @relation(fields: [eventId], references: [id])
   protocol       String?
   target         String?
@@ -527,17 +532,21 @@ model EventNeuroFeedback {
   other          String?
   dateTime       DateTime @default(now())
 
+  // یونیک حذف شد — در دادهٔ legacy چند فرم نوروفیدبک برای یک جلسه ثبت شده
+  @@index([eventId])
   @@map("EventNeuroFeedback")
 }
 
 model EventHeadMap {
   id          Int      @id @default(autoincrement())
-  eventId     Int      @unique
+  eventId     Int
   event       Event    @relation(fields: [eventId], references: [id])
   fileId      Int?
   description String?
   dateTime    DateTime @default(now())
 
+  // یونیک حذف شد — در دادهٔ legacy چند نقشهٔ سر برای یک جلسه ثبت شده
+  @@index([eventId])
   @@map("EventHeadMap")
 }
 
@@ -715,7 +724,7 @@ model ReferrRequest {
 
 model EventsEms {
   id                    Int      @id @default(autoincrement())
-  eventId               Int      @unique
+  eventId               Int
   event                 Event    @relation(fields: [eventId], references: [id])
   secretaryNID          BigInt?
   emsType               String?  // JSON — انواع مورد حاد
@@ -734,6 +743,8 @@ model EventsEms {
   severity              String   @default("متوسط") // کم | متوسط | بالا
   comments              EventEmsComment[]
 
+  // یونیک حذف شد — در دادهٔ legacy چند فرم EMS برای یک جلسه ثبت شده
+  @@index([eventId])
   @@map("EventsEms")
 }
 

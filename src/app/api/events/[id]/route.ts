@@ -27,8 +27,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   });
   if (!event) return fail("جلسه یافت نشد", 404);
 
-  const ems = await db.eventsEms.findUnique({ where: { eventId: eid }, include: { comments: true } });
-  return ok({ event, ems });
+  // findFirst — eventId دیگر یونیک نیست (در دادهٔ legacy چند فرم EMS برای یک جلسه ثبت شده)
+  const ems = await db.eventsEms.findFirst({ where: { eventId: eid }, include: { comments: true } });
+  // روابط نوروفیدبک/نقشهٔ سر یک‌به‌چند شدند — برای حفظ شکل پاسخ، اولین فرم برگردانده می‌شود
+  const { neuroFeedback: nfList, headMap: hmList, ...eventRest } = event;
+  const eventSingle = { ...eventRest, neuroFeedback: nfList?.[0] ?? null, headMap: hmList?.[0] ?? null };
+  return ok({ event: eventSingle, ems });
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {

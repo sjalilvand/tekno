@@ -309,7 +309,11 @@ for (const p of plan) {
     }
 
     const colSel = cols.map((c) => `${q(c.sqlite)} AS ${q(c.target)}`).join(", ");
-    const insertSql = `INSERT ${MODE === "append" ? "IGNORE " : ""}INTO ${bt(table)} (${cols.map((c) => bt(c.target)).join(", ")}) VALUES ?`;
+    // ON DUPLICATE KEY UPDATE id=id → اجرای مجدد امن است؛ ردیف تکراری فقط بی‌اثر به‌روزرسانی می‌شود
+    // (در برخورد با کلید یکتای باقی‌مانده کل جدول شکست نمی‌خورد)
+    const hasId = cols.some((c) => c.target === "id");
+    const onDup = MODE === "truncate" && hasId ? ` ON DUPLICATE KEY UPDATE ${bt("id")}=${bt("id")}` : "";
+    const insertSql = `INSERT ${MODE === "append" ? "IGNORE " : ""}INTO ${bt(table)} (${cols.map((c) => bt(c.target)).join(", ")}) VALUES ?${onDup}`;
 
     if (count === 0) {
       status[table] = { rows: 0, done: true, ts: new Date().toISOString() };

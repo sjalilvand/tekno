@@ -1,5 +1,5 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۳)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۴)
 #  تغییرات ۵.۳: توقف نمونهٔ در حال اجرا «قبل از build» — رفع خطای
 #  EPERM: unlink query_engine-windows.dll.node (قفل فایل توسط اجرای قبلی)
 #  تغییرات ۵.۲: اجرای اسکریپت‌های TS با خود Node (بدون دانلود tsx)،
@@ -222,33 +222,40 @@ function Install-Dependencies {
   Write-Ok "وابستگی‌ها نصب شدند"
 }
 
-function Invoke-PrismaSetup {
+# ------------------------------------------------------------- همگام‌سازی اسکیمای MySQL
+# در حالت import هم اجرا می‌شود تا تغییر ساختار (مثل حذف کلیدهای یکتای ناسازگار با دادهٔ legacy) اعمال شود
+function Invoke-MysqlSchemaSync {
   Push-Location $InstallDir
-  if ($DbEngine -eq "mysql") {
+  try {
     Write-Step "اتصال به MySQL واقعی — prisma db push --schema prisma/schema.mysql.prisma"
     # client تولیدی نهایی باید از اسکیمای MySQL باشد
     Invoke-Native { npx prisma generate --schema prisma/schema.mysql.prisma 2>&1 | Out-Null }
-    if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "prisma generate (mysql) ناموفق بود" }
+    if ($LASTEXITCODE -ne 0) { Write-Fail "prisma generate (mysql) ناموفق بود" }
     Invoke-Native { npx prisma db push --schema prisma/schema.mysql.prisma --accept-data-loss 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
     if ($LASTEXITCODE -ne 0) {
-      Pop-Location
       Write-Warn2 "prisma db push ناموفق بود — احتمالاً دیتابیس «$MysqlDatabase» وجود ندارد"
       Write-Host "  ایجاد دستی دیتابیس:" -ForegroundColor Yellow
       Write-Host "    mysql -u $MysqlUser -p -e `"CREATE DATABASE $MysqlDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`"" -ForegroundColor Yellow
       exit 1
     }
     Write-Ok "ساختار جداول روی MySQL ایجاد/به‌روزرسانی شد"
+  } finally {
+    Pop-Location
+  }
+}
+
+function Invoke-PrismaSetup {
+  if ($DbEngine -eq "mysql") { Invoke-MysqlSchemaSync; return }
+  Push-Location $InstallDir
+  Write-Step "آماده‌سازی SQLite"
+  Invoke-Native { npx prisma generate 2>&1 | Out-Null }
+  if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "prisma generate ناموفق بود" }
+  if (-not (Test-Path (Get-SqlitePath))) {
+    $env:DATABASE_URL = "file:" + ((Get-SqlitePath) -replace '\\','/')
+    Invoke-Native { npx prisma db push --accept-data-loss 2>&1 | Out-Null }
+    Write-Ok "دیتابیس SQLite جدید ساخته شد: $(Get-SqlitePath)"
   } else {
-    Write-Step "آماده‌سازی SQLite"
-    Invoke-Native { npx prisma generate 2>&1 | Out-Null }
-    if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "prisma generate ناموفق بود" }
-    if (-not (Test-Path (Get-SqlitePath))) {
-      $env:DATABASE_URL = "file:" + ((Get-SqlitePath) -replace '\\','/')
-      Invoke-Native { npx prisma db push --accept-data-loss 2>&1 | Out-Null }
-      Write-Ok "دیتابیس SQLite جدید ساخته شد: $(Get-SqlitePath)"
-    } else {
-      Write-Ok "از دیتابیس موجود استفاده می‌شود: $(Get-SqlitePath)"
-    }
+    Write-Ok "از دیتابیس موجود استفاده می‌شود: $(Get-SqlitePath)"
   }
   Pop-Location
 }
@@ -447,7 +454,7 @@ switch ($Mode) {
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۳" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۴" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {
@@ -468,5 +475,5 @@ switch ($Mode) {
   "stop"    { Stop-App }
   "restart" { Stop-App; Start-App }
   "status"  { Show-Status }
-  "import"  { Write-DotEnv; Invoke-DataImport; Invoke-SeedAdmin }
+  "import"  { Write-DotEnv; if ($DbEngine -eq "mysql") { Invoke-MysqlSchemaSync }; Invoke-DataImport; Invoke-SeedAdmin }
 }
