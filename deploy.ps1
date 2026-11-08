@@ -1,5 +1,7 @@
 ﻿# =====================================================================
-#  سامانه راه زندگی — استقرار خودکار روی ویندوز (نسخه ۵.۱)
+#  سامانه راه زندگی — استقرار خودکار روی ویندوز (نسخه ۵.۲)
+#  تغییرات ۵.۲: اجرای اسکریپت‌های TS با خود Node (بدون دانلود tsx)،
+#  جلوگیری از حذف وابستگی‌های dev توسط npm (نشتی NODE_ENV) و --include=dev
 # ---------------------------------------------------------------------
 #  این اسکریپت سامانه را از GitHub می‌گیرد، وابستگی‌ها را نصب می‌کند،
 #  دیتابیس MySQL واقعی را آماده می‌کند (prisma db push --schema prisma/schema.mysql.prisma)
@@ -43,6 +45,10 @@ param(
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 $PSStyle = $null  # سازگاری با PowerShell 5.1
+
+# مهم: اگر از اجرای قبلی NODE_ENV=production در همین سشن PowerShell مانده باشد،
+# npm آن را بهانهٔ حذف وابستگی‌های dev (tsx، typescript، tailwindcss و…) می‌گیرد
+Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
 
 function Write-Step { param($m) Write-Host ""; Write-Host "▶ $m" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "  ✔ $m" -ForegroundColor Green }
@@ -183,8 +189,14 @@ function Test-EnvMatches {
 function Install-Dependencies {
   Write-Step "نصب وابستگی‌ها (npm install) — چند دقیقه طول می‌کشد"
   Push-Location $InstallDir
-  Invoke-Native { npm install --no-audit --no-fund 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
-  if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "نصب وابستگی‌ها ناموفق بود" }
+  # --include=dev: tsx/typescript/tailwindcss لازمِ build و انتقال داده‌اند؛
+  # NODE_ENV هم موقتاً حذف می‌شود تا npm وابستگی‌های dev را حذف نکند
+  $oldNodeEnv = $env:NODE_ENV
+  Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
+  Invoke-Native { npm install --no-audit --no-fund --include=dev 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+  $code = $LASTEXITCODE
+  if ($null -eq $oldNodeEnv) { Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue } else { $env:NODE_ENV = $oldNodeEnv }
+  if ($code -ne 0) { Pop-Location; Write-Fail "نصب وابستگی‌ها ناموفق بود" }
   Pop-Location
   Write-Ok "وابستگی‌ها نصب شدند"
 }
@@ -228,7 +240,12 @@ function Invoke-DataImport {
   Write-Step "انتقال داده از SQLite به MySQL"
   Write-Host "  مبدأ: $src ($([math]::Round((Get-Item $src).Length/1GB,2)) گیگابایت)" -ForegroundColor DarkGray
   Push-Location $InstallDir
-  Invoke-Native { npx tsx prisma/import-sqlite-to-mysql.ts --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+  # Node 23+ فایل‌های TS را خودش اجرا می‌کند — بدون دانلود tsx و بدون نیاز به اینترنت
+  if ((Get-NodeMajor) -ge 23) {
+    Invoke-Native { node prisma/import-sqlite-to-mysql.ts --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+  } else {
+    Invoke-Native { npx --yes tsx prisma/import-sqlite-to-mysql.ts --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+  }
   if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "انتقال داده ناموفق بود — پس از رفع مشکل با --resume ادامه دهید" }
   Pop-Location
   Write-Ok "انتقال داده کامل شد (وضعیت: $DataDir\import_status.json)"
@@ -238,10 +255,20 @@ function Invoke-DataImport {
 function Invoke-SeedAdmin {
   Write-Step "ایجاد/به‌روزرسانی حساب‌های مدیریتی (admin)"
   Push-Location $InstallDir
-  Invoke-Native { npx tsx prisma/seed-admin.ts 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
-  $code = $LASTEXITCODE
+  $code = 1
+  # Node 23+ فایل‌های TS را خودش اجرا می‌کند — بدون دانلود tsx و بدون نیاز به اینترنت
+  if ((Get-NodeMajor) -ge 23) {
+    Invoke-Native { node prisma/seed-admin.ts 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    $code = $LASTEXITCODE
+  }
+  if ($code -ne 0) {
+    # جایگزین: tsx محلی (--yes تا در پرسش «Ok to proceed?» متوقف نماند)
+    Write-Warn2 "اجرای مستقیم با node ممکن نشد — تلاش با tsx محلی…"
+    Invoke-Native { npx --yes tsx prisma/seed-admin.ts 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    $code = $LASTEXITCODE
+  }
   Pop-Location
-  if ($code -ne 0) { Write-Warn2 "ایجاد حساب‌های مدیریتی ناموفق بود — دستی اجرا کنید: npx tsx prisma/seed-admin.ts"; return }
+  if ($code -ne 0) { Write-Warn2 "ایجاد حساب‌های مدیریتی ناموفق بود — دستی اجرا کنید: npm run seed:admin"; return }
   Write-Ok "حساب‌های admin / manager / consultant با رمز 123456 آماده‌اند"
 }
 
@@ -264,12 +291,18 @@ function Start-App {
   $server = Join-Path $InstallDir ".next\standalone\server.js"
   if (-not (Test-Path $server)) { Write-Fail "server.js پیدا نشد — ابتدا build کنید" }
   Push-Location $InstallDir
+  # متغیرها فقط به فرایند سامانه برسند و در سشن PowerShell باقی نمانند
+  # (NODE_ENV باقی‌مانده در اجرای بعدی باعث حذف وابستگی‌های dev توسط npm می‌شود)
+  $oldNodeEnv = $env:NODE_ENV; $oldPort = $env:PORT; $oldHost = $env:HOSTNAME
   $env:NODE_ENV = "production"
   $env:PORT = "$AppPort"
   $env:HOSTNAME = "0.0.0.0"
   $logFile = Join-Path $InstallDir "server.log"
   $proc = Start-Process -FilePath "node" -ArgumentList "`"$server`"" -WorkingDirectory $InstallDir `
           -WindowStyle Hidden -RedirectStandardOutput $logFile -RedirectStandardError "$InstallDir\server.err.log" -PassThru
+  if ($null -eq $oldNodeEnv) { Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue } else { $env:NODE_ENV = $oldNodeEnv }
+  if ($null -eq $oldPort)    { Remove-Item Env:PORT    -ErrorAction SilentlyContinue } else { $env:PORT    = $oldPort }
+  if ($null -eq $oldHost)    { Remove-Item Env:HOSTNAME -ErrorAction SilentlyContinue } else { $env:HOSTNAME = $oldHost }
   Pop-Location
   Set-Content -Path (Join-Path $InstallDir "app.pid") -Value $proc.Id
   Write-Ok "سامانه اجرا شد (PID $($proc.Id))"
