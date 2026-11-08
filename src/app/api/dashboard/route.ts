@@ -2,6 +2,11 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, ok, fail } from "@/lib/server";
 
+/**
+ * داشبورد اصلی — مقاوم در برابر داده‌های ناقص:
+ * هر متریک با allSettled جدا محاسبه می‌شود تا خطای یک بخش
+ * (مثلاً ناسازگاری دادهٔ قدیمی) کل داشبورد را نبندد.
+ */
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser(req);
   if (!user) return fail("UNAUTHORIZED", 401);
@@ -10,47 +15,56 @@ export async function GET(req: NextRequest) {
   const monthAgo = new Date(now.getTime() - 30 * 86400000);
   const prevMonthStart = new Date(now.getTime() - 60 * 86400000);
 
+  /** اجرای امن یک کوئری — در صورت خطا مقدار پیش‌فرض برمی‌گردد */
+  async function settled<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      console.error("[dashboard] metric failed:", e?.message ?? e);
+      return fallback;
+    }
+  }
+
   const [
     totalEvents, confirmedEvents, pendingEvents, rejectedEvents, undoneEvents,
     totalUsers, totalCenters, totalConsultants,
     pendingReferrals, openEms, activeBudgets,
     eventsThisMonth, eventsPrevMonth,
     serviceCounts, recentEvents, upcomingReserves, monthlySeries, statusCounts,
+    services,
   ] = await Promise.all([
-    db.event.count(),
-    db.event.count({ where: { status: "تایید نهایی" } }),
-    db.event.count({ where: { status: { contains: "در انتظار" } } }),
-    db.event.count({ where: { status: "رد شده" } }),
-    db.event.count({ where: { status: "ناتمام" } }),
-    db.user.count(),
-    db.center.count({ where: { isEnabled: true } }),
-    db.user.count({ where: { roles: { some: { role: { title: { in: ["مشاور", "روانپزشک"] } } } } } }),
-    db.referr.count({ where: { status: "در انتظار" } }),
-    db.eventsEms.count({ where: { hadPaymentStatus: { in: ["در انتظار بررسی", "تایید شده"] } } }),
-    db.budget.findMany({ where: { isActive: true }, take: 6 }),
-    db.event.count({ where: { startDate: { gte: monthAgo } } }),
-    db.event.count({ where: { startDate: { gte: prevMonthStart, lt: monthAgo } } }),
-    db.event.groupBy({ by: ["serviceId"], where: { status: "تایید نهایی" }, _count: true }),
-    db.event.findMany({
+    settled(() => db.event.count(), 0),
+    settled(() => db.event.count({ where: { status: "تایید نهایی" } }), 0),
+    settled(() => db.event.count({ where: { status: { contains: "در انتظار" } } }), 0),
+    settled(() => db.event.count({ where: { status: "رد شده" } }), 0),
+    settled(() => db.event.count({ where: { status: "ناتمام" } }), 0),
+    settled(() => db.user.count(), 0),
+    settled(() => db.center.count({ where: { isEnabled: true } }), 0),
+    settled(() => db.user.count({ where: { roles: { some: { role: { title: { in: ["مشاور", "روانپزشک"] } } } } } }), 0),
+    settled(() => db.referr.count({ where: { status: "در انتظار" } }), 0),
+    settled(() => db.eventsEms.count({ where: { hadPaymentStatus: { in: ["در انتظار بررسی", "تایید شده"] } } }), 0),
+    settled(() => db.budget.findMany({ where: { isActive: true }, take: 6 }), []),
+    settled(() => db.event.count({ where: { startDate: { gte: monthAgo } } }), 0),
+    settled(() => db.event.count({ where: { startDate: { gte: prevMonthStart, lt: monthAgo } } }), 0),
+    settled(() => db.event.groupBy({ by: ["serviceId"], where: { status: "تایید نهایی" }, _count: true }), [] as { serviceId: number; _count: number }[]),
+    settled(() => db.event.findMany({
       orderBy: { startDate: "desc" }, take: 8,
       include: { user: { select: { name: true, family: true, avatarColor: true } }, service: { select: { short: true } }, center: { select: { cityTitle: true } } },
-    }),
-    db.eventReserve.findMany({
+    }), []),
+    settled(() => db.eventReserve.findMany({
       where: { date: { gte: now } }, orderBy: { date: "asc" }, take: 6,
-      include: {
-        event: { include: { user: { select: { name: true, family: true } } } },
-      },
-    }),
-    db.event.findMany({
+      include: { event: { include: { user: { select: { name: true, family: true } } } } },
+    }), []),
+    settled(() => db.event.findMany({
       where: { startDate: { gte: new Date(now.getTime() - 330 * 86400000) }, status: "تایید نهایی" },
       select: { startDate: true },
-    }),
-    db.event.groupBy({ by: ["status"], _count: true }),
+    }), [] as { startDate: Date | null }[]),
+    settled(() => db.event.groupBy({ by: ["status"], _count: true }), [] as { status: string | null; _count: number }[]),
+    settled(() => db.service.findMany(), []),
   ]);
 
-  const services = await db.service.findMany();
   const serviceDist = serviceCounts
-    .map((s) => ({ name: services.find((x) => x.id === s.serviceId)?.short ?? "—", value: s._count }))
+    .map((s) => ({ name: services.find((x) => x.id === s.serviceId)?.short ?? "سایر", value: s._count }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 8);
 
@@ -61,6 +75,7 @@ export async function GET(req: NextRequest) {
     monthMap.set(`${d.getFullYear()}-${d.getMonth()}`, 0);
   }
   for (const ev of monthlySeries) {
+    if (!ev?.startDate) continue;
     const d = new Date(ev.startDate);
     const key = `${d.getFullYear()}-${d.getMonth()}`;
     if (monthMap.has(key)) monthMap.set(key, (monthMap.get(key) ?? 0) + 1);
@@ -88,7 +103,7 @@ export async function GET(req: NextRequest) {
     },
     budgets: budgetsList(activeBudgets),
     serviceDist,
-    statusDist: statusCounts.map((s) => ({ name: s.status, value: s._count })),
+    statusDist: statusCounts.map((s) => ({ name: s.status ?? "نامشخص", value: s._count })),
     monthlySeries: series,
     recentEvents,
     upcomingReserves,

@@ -7,7 +7,8 @@ import {
 } from "recharts";
 import { faNum } from "@/lib/jalali";
 
-export const CHART_COLORS = ["#0d9488", "#f59e0b", "#10b981", "#f43f5e", "#06b6d4", "#8b5cf6", "#f97316", "#84cc16", "#ec4899", "#64748b"];
+// پالت نمودارها — رز/زرشکی/طلایی (الگوی رزپسی)
+export const CHART_COLORS = ["#a83a54", "#c99a5b", "#5c4a6e", "#d97b90", "#8a76a0", "#7c2740", "#b98a4b", "#c2647e", "#6d5a80", "#a8838d"];
 
 const tooltipStyle = {
   borderRadius: 12,

@@ -5,6 +5,7 @@ import { AppShell, MetaUser } from "@/components/app-shell";
 import { LoginView } from "@/views/login";
 import { DashboardView } from "@/views/dashboard";
 import { BiView } from "@/views/bi";
+import { ReportBuilderView } from "@/views/report-builder";
 import { EventsView } from "@/views/events";
 import { GroupEventsView } from "@/views/group-events";
 import { ReservesView } from "@/views/reserves";
@@ -52,7 +53,7 @@ export default function Page() {
   if (booting) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background" dir="rtl">
-        <span className="flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-teal-500 to-emerald-600 text-white shadow-xl">
+        <span className="brand-gradient flex h-16 w-16 items-center justify-center rounded-3xl text-white shadow-xl">
           <Flower2 className="h-8 w-8" />
         </span>
         <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -86,6 +87,7 @@ function ShellWithRouter({
   const view = React.useMemo(() => {
     switch (route) {
       case "bi": return <BiView />;
+      case "reports": return <ReportBuilderView />;
       case "events": return <EventsView />;
       case "group-events": return <GroupEventsView />;
       case "reserves": return <ReservesView />;

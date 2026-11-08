@@ -9,6 +9,7 @@ import {
   Inbox, Siren, Users, Building2, ShieldCheck, FileSignature, Target, Wallet, Receipt,
   MessageSquareText, Mail, CalendarHeart, ScrollText, LifeBuoy, Settings, BookOpen,
   ChevronsLeft, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search, PlugZap,
+  FileBarChart2,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { NameAvatar } from "@/components/shared";
+import { BRAND } from "@/lib/brand";
 
 export type MetaUser = {
   id: number; name: string; family: string; username: string; nid: number;
@@ -31,7 +33,10 @@ type NavGroup = { label: string; items: NavItem[] };
 const NAV: NavGroup[] = [
   { label: "نگاه کلی", items: [
     { key: "dashboard", label: "داشبورد", icon: LayoutDashboard },
-    { key: "bi", label: "تحلیل مدیریتی BI", icon: BarChart3 },
+    { key: "bi", label: "داشبوردهای مدیریتی", icon: BarChart3 },
+  ]},
+  { label: "ابزارها", items: [
+    { key: "reports", label: "گزارش‌ساز حرفه‌ای", icon: FileBarChart2 },
   ]},
   { label: "عملیات", items: [
     { key: "events", label: "جلسات مشاوره", icon: CalendarCheck },
@@ -95,7 +100,7 @@ function NavList({
                     className={cn(
                       "group relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-all duration-150",
                       active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_rgba(20,184,166,0.15)]"
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_rgba(168,58,84,0.15)]"
                         : "text-sidebar-foreground hover:bg-muted/70 hover:text-foreground"
                     )}
                   >
@@ -131,13 +136,13 @@ function NavList({
 function Brand({ collapsed, onClose }: { collapsed: boolean; onClose?: () => void }) {
   return (
     <div className={cn("flex items-center gap-3 border-b px-4 py-4", collapsed && "justify-center px-2")}>
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 text-white shadow-md">
+      <span className="brand-gradient flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white shadow-md">
         <Flower2 className="h-5 w-5" />
       </span>
       {!collapsed && (
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-extrabold">راه زندگی</p>
-          <p className="truncate text-[10.5px] text-muted-foreground">سامانه خدمات روانشناسی و مشاوره</p>
+          <p className="truncate text-sm font-extrabold">{BRAND.name}</p>
+          <p className="truncate text-[10.5px] text-muted-foreground">{BRAND.tagline}</p>
         </div>
       )}
       {onClose && (
@@ -205,7 +210,7 @@ export function AppShell({
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileOpen(true)} aria-label="باز کردن منو">
               <Menu className="h-5 w-5" />
             </Button>
-            <h2 className="hidden text-[15px] font-bold sm:block">{current?.label ?? "سامانه راه زندگی"}</h2>
+            <h2 className="hidden text-[15px] font-bold sm:block">{current?.label ?? BRAND.name}</h2>
             <div className="flex-1" />
 
             <button
@@ -272,7 +277,8 @@ export function AppShell({
         </main>
 
         <footer className="border-t py-4 text-center text-xs text-muted-foreground mt-auto">
-          نسخه ۵.۰.۰ — سامانه مراکز خدمات روانشناسی و مشاوره راه زندگی
+          <p>نسخه {BRAND.version} — {BRAND.name}</p>
+          <p className="mt-0.5 text-[10.5px] opacity-80">{BRAND.hours} | تلفن: {BRAND.phone}</p>
         </footer>
       </div>
     </div>

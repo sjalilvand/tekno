@@ -7,7 +7,7 @@ import { faNum, jLong, jTime } from "@/lib/jalali";
 import { api, useQuery, navigate } from "@/lib/client";
 import {
   CalendarCheck, Users, Building2, ArrowLeftRight, Siren, ClipboardCheck,
-  Clock, UserRoundCheck, TrendingUp, CalendarClock, ChevronLeft,
+  Clock, UserRoundCheck, TrendingUp, CalendarClock, ChevronLeft, FileBarChart2,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,15 @@ export function DashboardView() {
   const { data, loading, error } = useQuery<DashboardData>(() => api("/api/dashboard"), []);
 
   if (loading) return <LoadingView />;
-  if (error || !data) return <div className="p-10 text-center text-sm text-rose-500">{error ?? "خطا در بارگذاری داده‌ها"}</div>;
+  if (error || !data)
+    return (
+      <div className="flex flex-col items-center gap-3 p-10 text-center">
+        <p className="text-sm text-rose-500">{error ?? "خطا در بارگذاری داده‌ها"}</p>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.location.reload()}>
+          تلاش دوباره
+        </Button>
+      </div>
+    );
 
   const k = data.kpis;
   const hour = new Date().getHours();
@@ -134,8 +142,8 @@ export function DashboardView() {
                   <div className="flex items-center gap-2.5">
                     <NameAvatar name={row.user.name} family={row.user.family} color={row.user.avatarColor} size={32} />
                     <div>
-                      <p className="text-[13px] font-semibold leading-4">{row.user.name} {row.user.family}</p>
-                      <p className="text-[10.5px] text-muted-foreground leading-4">{row.service.short} — {row.center.cityTitle}</p>
+                      <p className="text-[13px] font-semibold leading-4">{row.user?.name ?? "—"} {row.user?.family ?? ""}</p>
+                      <p className="text-[10.5px] text-muted-foreground leading-4">{row.service?.short ?? "سایر"} — {row.center?.cityTitle ?? "—"}</p>
                     </div>
                   </div>
                 ),
@@ -162,8 +170,8 @@ export function DashboardView() {
                     <CalendarClock className="h-4 w-4" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold">{r.event.user.name} {r.event.user.family}</p>
-                    <p className="text-[10.5px] text-muted-foreground">کد رهگیری {faNum(r.event.trackingCode ?? "—")}</p>
+                    <p className="truncate text-xs font-semibold">{r.event?.user?.name ?? "—"} {r.event?.user?.family ?? ""}</p>
+                    <p className="text-[10.5px] text-muted-foreground">کد رهگیری {faNum(r.event?.trackingCode ?? "—")}</p>
                   </div>
                   <div className="text-left">
                     <DateCell value={r.date} />
@@ -179,7 +187,8 @@ export function DashboardView() {
               <QuickBtn icon={<ArrowLeftRight className="h-4 w-4" />} label="ارجاعات در انتظار" count={k.pendingReferrals} onClick={() => navigate("referrals")} />
               <QuickBtn icon={<Siren className="h-4 w-4" />} label="موارد حاد" count={k.openEms} onClick={() => navigate("ems")} />
               <QuickBtn icon={<Clock className="h-4 w-4" />} label="جلسات ناتمام" count={k.undoneEvents} onClick={() => navigate("events")} />
-              <QuickBtn icon={<TrendingUp className="h-4 w-4" />} label="گزارش BI" onClick={() => navigate("bi")} />
+              <QuickBtn icon={<TrendingUp className="h-4 w-4" />} label="داشبوردهای مدیریتی" onClick={() => navigate("bi")} />
+              <QuickBtn icon={<FileBarChart2 className="h-4 w-4" />} label="گزارش‌ساز" onClick={() => navigate("reports")} />
             </div>
           </SectionCard>
         </div>

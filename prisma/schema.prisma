@@ -436,6 +436,8 @@ model Event {
   @@index([acceptorId])
   @@index([startDate])
   @@index([status])
+  @@index([serviceId])
+  @@index([centerId])
   @@map("Events")
 }
 
@@ -458,6 +460,7 @@ model EventReserve {
   userId     Int
   acceptorId Int
   date       DateTime
+  @@index([date])
 
   @@map("EventReserves")
 }

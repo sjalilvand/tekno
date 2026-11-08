@@ -45,73 +45,73 @@
 
 :root {
   --radius: 0.75rem;
-  /* تم روشن — فیروزه‌ای آرامش‌بخش روی زمینه گرم */
-  --background: #f5f8f8;
-  --foreground: #10201e;
+  /* تم روشن — رز و زرشکی گرم (الگوی رزپسی) روی زمینهٔ کرم روشن */
+  --background: #fbf7f4;
+  --foreground: #2e2228;
   --card: #ffffff;
-  --card-foreground: #10201e;
+  --card-foreground: #2e2228;
   --popover: #ffffff;
-  --popover-foreground: #10201e;
-  --primary: #0f766e;
-  --primary-foreground: #f0fdfa;
-  --secondary: #eef4f3;
-  --secondary-foreground: #134e4a;
-  --muted: #eef2f2;
-  --muted-foreground: #5f7470;
-  --accent: #d9f2ec;
-  --accent-foreground: #115e59;
+  --popover-foreground: #2e2228;
+  --primary: #a83a54;
+  --primary-foreground: #fff5f7;
+  --secondary: #f7eef1;
+  --secondary-foreground: #7c2740;
+  --muted: #f4ebee;
+  --muted-foreground: #8a6f79;
+  --accent: #fbe9ee;
+  --accent-foreground: #a83a54;
   --destructive: #dc2626;
-  --border: #e2ebeb;
-  --input: #dfe8e8;
-  --ring: #14b8a6;
-  --chart-1: #0d9488;
-  --chart-2: #f59e0b;
-  --chart-3: #10b981;
-  --chart-4: #f43f5e;
-  --chart-5: #06b6d4;
+  --border: #eddde4;
+  --input: #e9d9de;
+  --ring: #a83a54;
+  --chart-1: #a83a54;
+  --chart-2: #c99a5b;
+  --chart-3: #5c4a6e;
+  --chart-4: #d97b90;
+  --chart-5: #8a76a0;
   --sidebar: #ffffff;
-  --sidebar-foreground: #334155;
-  --sidebar-primary: #0f766e;
-  --sidebar-primary-foreground: #f0fdfa;
-  --sidebar-accent: #e6f6f2;
-  --sidebar-accent-foreground: #0f766e;
-  --sidebar-border: #e6eeee;
-  --sidebar-ring: #14b8a6;
+  --sidebar-foreground: #6b555d;
+  --sidebar-primary: #a83a54;
+  --sidebar-primary-foreground: #fff5f7;
+  --sidebar-accent: #f7eef1;
+  --sidebar-accent-foreground: #7c2740;
+  --sidebar-border: #f1e3e8;
+  --sidebar-ring: #a83a54;
 }
 
 .dark {
-  /* تم تیره */
-  --background: #0c1518;
-  --foreground: #dcebe8;
-  --card: #12201f;
-  --card-foreground: #dcebe8;
-  --popover: #142325;
-  --popover-foreground: #dcebe8;
-  --primary: #2dd4bf;
-  --primary-foreground: #04211d;
-  --secondary: #1a2c2b;
-  --secondary-foreground: #a7d7cf;
-  --muted: #182827;
-  --muted-foreground: #8aa5a0;
-  --accent: #17403a;
-  --accent-foreground: #7fe7d3;
-  --destructive: #ef4444;
-  --border: #1f3230;
-  --input: #233736;
-  --ring: #2dd4bf;
-  --chart-1: #2dd4bf;
-  --chart-2: #fbbf24;
-  --chart-3: #34d399;
-  --chart-4: #fb7185;
-  --chart-5: #22d3ee;
-  --sidebar: #0e1a1c;
-  --sidebar-foreground: #9fbcb7;
-  --sidebar-primary: #2dd4bf;
-  --sidebar-primary-foreground: #04211d;
-  --sidebar-accent: #173430;
-  --sidebar-accent-foreground: #7fe7d3;
-  --sidebar-border: #1c2f2e;
-  --sidebar-ring: #2dd4bf;
+  /* تم تیره — زرشکی گرم */
+  --background: #1d1418;
+  --foreground: #f0e4e8;
+  --card: #271b20;
+  --card-foreground: #f0e4e8;
+  --popover: #2c1f25;
+  --popover-foreground: #f0e4e8;
+  --primary: #e07a92;
+  --primary-foreground: #2b0d16;
+  --secondary: #332329;
+  --secondary-foreground: #eecdd5;
+  --muted: #302227;
+  --muted-foreground: #b59aa3;
+  --accent: #452730;
+  --accent-foreground: #f0b7c4;
+  --destructive: #f87171;
+  --border: #3a2a30;
+  --input: #453238;
+  --ring: #e07a92;
+  --chart-1: #e07a92;
+  --chart-2: #d9b380;
+  --chart-3: #a78bc0;
+  --chart-4: #e88fa4;
+  --chart-5: #b39dd1;
+  --sidebar: #241519;
+  --sidebar-foreground: #c3a8b1;
+  --sidebar-primary: #e07a92;
+  --sidebar-primary-foreground: #2b0d16;
+  --sidebar-accent: #3a252c;
+  --sidebar-accent-foreground: #f0b7c4;
+  --sidebar-border: #332329;
+  --sidebar-ring: #e07a92;
 }
 
 @layer base {
@@ -147,6 +147,41 @@
   background: color-mix(in srgb, var(--card) 78%, transparent);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+}
+
+/* گرادیان برند — رز به زرشکی (الگوی رزپسی) */
+.brand-gradient {
+  background: linear-gradient(135deg, #a83a54 0%, #7c2740 100%);
+}
+
+/* استایل چاپ گزارش — A4 تمیز */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    inset: 0;
+    padding: 12mm;
+    background: white;
+    color: black;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-area table {
+    font-size: 10.5px;
+  }
+  .print-area table th,
+  .print-area table td {
+    border: 1px solid #ccc;
+    padding: 4px 8px;
+    white-space: normal;
+  }
 }
 
 /* آواتار حروف اول نام */

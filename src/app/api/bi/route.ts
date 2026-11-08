@@ -6,24 +6,36 @@ export async function GET(req: NextRequest) {
   const user = await getCurrentUser(req);
   if (!user) return fail("UNAUTHORIZED", 401);
 
+  /** اجرای امن — خطای هر بخش کل تحلیل را نمی‌بندد */
+  async function settled<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      console.error("[bi] metric failed:", e?.message ?? e);
+      return fallback;
+    }
+  }
+
   const [provinceEvents, serviceTotals, centerPerf, statusDist, genderDist, emsSev, budgetRows] = await Promise.all([
-    db.event.groupBy({
+    settled(() => db.event.groupBy({
       by: ["centerId"], where: { status: "تایید نهایی" }, _count: true,
-    }),
-    db.event.groupBy({ by: ["serviceId"], _count: true, where: { status: "تایید نهایی" } }),
-    db.event.groupBy({
+    }), [] as { centerId: number; _count: number }[]),
+    settled(() => db.event.groupBy({ by: ["serviceId"], _count: true, where: { status: "تایید نهایی" } }), [] as { serviceId: number; _count: number }[]),
+    settled(() => db.event.groupBy({
       by: ["centerId"], where: { status: "تایید نهایی" },
       _count: true, _sum: { acceptorFee: true, userTariff: true },
-    }),
-    db.event.groupBy({ by: ["status"], _count: true }),
-    db.user.groupBy({ by: ["gender"], _count: true }),
-    db.eventsEms.groupBy({ by: ["severity"], _count: true }),
-    db.budget.findMany({ where: { isActive: true }, include: { provinces: { include: { province: { select: { title: true } } } } } }),
+    }), [] as { centerId: number; _count: number; _sum: { acceptorFee: number | null; userTariff: number | null } }[]),
+    settled(() => db.event.groupBy({ by: ["status"], _count: true }), [] as { status: string | null; _count: number }[]),
+    settled(() => db.user.groupBy({ by: ["gender"], _count: true }), [] as { gender: string | null; _count: number }[]),
+    settled(() => db.eventsEms.groupBy({ by: ["severity"], _count: true }), [] as { severity: string | null; _count: number }[]),
+    settled(() => db.budget.findMany({ where: { isActive: true }, include: { provinces: { include: { province: { select: { title: true } } } } } }), []),
   ]);
 
-  const centers = await db.center.findMany({ select: { id: true, title: true, provinceTitle: true } });
-  const services = await db.service.findMany();
-  const provinces = await db.province.findMany({ select: { id: true, title: true } });
+  const [centers, services, provinces] = await Promise.all([
+    settled(() => db.center.findMany({ select: { id: true, title: true, provinceTitle: true } }), []),
+    settled(() => db.service.findMany(), []),
+    settled(() => db.province.findMany({ select: { id: true, title: true } }), []),
+  ]);
 
   // آمار به تفکیک استان
   const byProvince = new Map<string, number>();
@@ -64,9 +76,9 @@ export async function GET(req: NextRequest) {
     provinceStats,
     serviceStats,
     centerStats,
-    statusDist: statusDist.map((s) => ({ name: s.status, value: s._count })),
+    statusDist: statusDist.map((s) => ({ name: s.status ?? "نامشخص", value: s._count })),
     genderDist: genderDist.map((g) => ({ name: g.gender ?? "نامشخص", value: g._count })),
-    emsSev: emsSev.map((e) => ({ name: e.severity, value: e._count })),
+    emsSev: emsSev.map((e) => ({ name: e.severity ?? "نامشخص", value: e._count })),
     budgetStats,
   });
 }
