@@ -133,10 +133,29 @@ function Get-Source {
   Write-Step "دریافت کد سامانه از $RepoUrl"
   if (Test-Path (Join-Path $InstallDir ".git")) {
     Push-Location $InstallDir
-    Invoke-Native { git fetch origin $Branch 2>$null }
-    Invoke-Native { git reset --hard "origin/$Branch" | Out-Null }
+    # اتصال به GitHub گاهی ناپایدار است — تا ۳ بار تلاش می‌شود
+    $fetchOk = $false
+    foreach ($i in 1..3) {
+      Invoke-Native { git fetch origin $Branch 2>$null }
+      if ($LASTEXITCODE -eq 0) { $fetchOk = $true; break }
+      if ($i -lt 3) { Write-Warn2 "اتصال به GitHub برقرار نشد (تلاش $i از ۳)…"; Start-Sleep -Seconds 2 }
+    }
+    if ($fetchOk) {
+      # فقط وقتی fetch موفق بود reset کن — وگرنه نسخهٔ محلیِ جدیدتر نابود می‌شود
+      Invoke-Native { git reset --hard "origin/$Branch" | Out-Null }
+    } else {
+      Write-Warn2 "به‌روزرسانی از GitHub انجام نشد — ادامه با کد محلی موجود"
+      Write-Host "  برای به‌روزرسانی دستی deploy.ps1 از CDN (بدون نیاز به گیت):" -ForegroundColor Yellow
+      Write-Host "    Invoke-WebRequest -UseBasicParsing -Uri 'https://cdn.jsdelivr.net/gh/sjalilvand/tekno@main/deploy.ps1' -OutFile 'deploy.ps1'" -ForegroundColor Yellow
+    }
+    $commit = ""
+    try {
+      $c = & git rev-parse --short HEAD 2>$null
+      if ($LASTEXITCODE -eq 0 -and $c) { $commit = "$c".Trim() }
+    } catch {}
     Pop-Location
-    Write-Ok "کد موجود به‌روزرسانی شد (git reset به origin/$Branch)"
+    if ($fetchOk) { Write-Ok "کد سامانه به‌روزرسانی شد (نسخهٔ $commit)" }
+    else { Write-Ok "کد محلی استفاده می‌شود (نسخهٔ $commit)" }
   } else {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Invoke-Native { git clone --depth 1 --branch $Branch $RepoUrl $InstallDir }
@@ -333,6 +352,17 @@ function Stop-App {
 }
 
 function Show-Status {
+  # نسخهٔ مستقرشده
+  $commit = ""
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    Push-Location $InstallDir
+    $c = & git rev-parse --short HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $c) { $commit = "$c".Trim() }
+  } catch {}
+  finally { Pop-Location; $ErrorActionPreference = $prevEap }
+  if ($commit) { Write-Host "  نسخهٔ کد: $commit" -ForegroundColor DarkGray }
   $p = Get-AppPid
   if ($p) {
     Write-Ok "سامانه در حال اجراست (PID $p) — http://localhost:$AppPort"
