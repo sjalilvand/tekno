@@ -983,3 +983,157 @@ model SyncLog {
   @@index([service, entity, createTime])
   @@map("SyncLogs")
 }
+
+// =====================================================================
+//  نسخهٔ ۶.۱ — دستیار هوشمند، کارتابل، فرم‌ساز، فرایند و تیک‌های هوشمند
+// =====================================================================
+
+// ---------------------------------------------------------------------
+// چت آنلاین هوشمند — تاریخچهٔ گفتگو و پاسخ‌های ساختاریافته
+// ---------------------------------------------------------------------
+
+model ChatMessage {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  role      String   // user | assistant
+  text      String
+  payload   String?  // JSON — نمودار / کارت‌ها / لینک‌های اکشن
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("ChatMessages")
+}
+
+// ---------------------------------------------------------------------
+// فرم‌ساز — تعریف فرم دلخواه و پاسخ‌های ثبت‌شده
+// ---------------------------------------------------------------------
+
+model FormDefinition {
+  id          Int      @id @default(autoincrement())
+  title       String
+  desc        String?
+  fields      String   // JSON — [{key,label,type,required,options}]
+  isActive    Boolean  @default(true)
+  createdBy   Int?
+  createdAt   DateTime @default(now())
+  submissions FormSubmission[]
+
+  @@map("FormDefinitions")
+}
+
+model FormSubmission {
+  id          Int            @id @default(autoincrement())
+  formId      Int
+  form        FormDefinition @relation(fields: [formId], references: [id])
+  userId      Int?           // متقاضی مرتبط (اختیاری)
+  eventId     Int?           // جلسهٔ مرتبط (اختیاری)
+  data        String         // JSON — مقادیر فیلدها
+  createdById Int?
+  createdAt   DateTime       @default(now())
+
+  @@index([formId])
+  @@index([userId])
+  @@map("FormSubmissions")
+}
+
+// ---------------------------------------------------------------------
+// فرایندهای سفارشی — تعریف مرحله‌ها، نمونهٔ اجرا و ثبت زمان مرحله‌ها
+// (مانیتورینگ و شبیه‌سازی هر درخواست بر همین پایه ساخته می‌شود)
+// ---------------------------------------------------------------------
+
+model ProcessDefinition {
+  id        Int               @id @default(autoincrement())
+  key       String            @unique
+  title     String
+  desc      String?
+  bpmnFile  String?           // فایل BPMN مرتبط در public/bpmn (اختیاری)
+  steps     String            // JSON — [{name, slaHours}]
+  isActive  Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  instances ProcessInstance[]
+
+  @@map("ProcessDefinitions")
+}
+
+model ProcessInstance {
+  id          Int               @id @default(autoincrement())
+  processId   Int
+  process     ProcessDefinition @relation(fields: [processId], references: [id])
+  refType     String            @default("Event") // Event | User | GroupEvent
+  refId       Int
+  title       String?           // برچسب نمایشی (نام متقاضی / کد پیگیری)
+  currentStep Int               @default(0)
+  status      String            @default("در جریان") // در جریان | تکمیل | متوقف
+  startedAt   DateTime          @default(now())
+  completedAt DateTime?
+  stepLogs    ProcessStepLog[]
+
+  @@unique([processId, refType, refId])
+  @@index([status])
+  @@map("ProcessInstances")
+}
+
+model ProcessStepLog {
+  id          Int             @id @default(autoincrement())
+  instanceId  Int
+  instance    ProcessInstance @relation(fields: [instanceId], references: [id])
+  stepIdx     Int
+  name        String
+  enteredAt   DateTime        @default(now())
+  exitedAt    DateTime?
+  durationMin Int?
+  note        String?
+
+  @@index([instanceId])
+  @@map("ProcessStepLogs")
+}
+
+// ---------------------------------------------------------------------
+// تیک‌های هوشمند — الگوهای چک‌لیست و اجراهای هوشمند با تیک خودکار
+// ---------------------------------------------------------------------
+
+model ChecklistTemplate {
+  id        Int            @id @default(autoincrement())
+  key       String         @unique
+  title     String
+  desc      String?
+  trigger   String         @default("manual") // new_client | acute | approval_stuck | manual
+  items     String         // JSON — [{title, autoRule}]
+  isActive  Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  runs      ChecklistRun[]
+
+  @@map("ChecklistTemplates")
+}
+
+model ChecklistRun {
+  id          Int               @id @default(autoincrement())
+  templateId  Int
+  template    ChecklistTemplate @relation(fields: [templateId], references: [id])
+  userId      Int?              // متقاضی مرتبط
+  eventId     Int?              // جلسهٔ مرتبط
+  title       String?           // برچسب نمایشی
+  status      String            @default("در جریان") // در جریان | تکمیل
+  createdAt   DateTime          @default(now())
+  completedAt DateTime?
+  items       ChecklistRunItem[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("ChecklistRuns")
+}
+
+model ChecklistRunItem {
+  id       Int          @id @default(autoincrement())
+  runId    Int
+  run      ChecklistRun @relation(fields: [runId], references: [id])
+  title    String
+  autoRule String?      // قاعدهٔ تیک خودکار
+  done     Boolean      @default(false)
+  auto     Boolean      @default(false)
+  doneAt   DateTime?
+  doneById Int?
+
+  @@index([runId])
+  @@map("ChecklistRunItems")
+}

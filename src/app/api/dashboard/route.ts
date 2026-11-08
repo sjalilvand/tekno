@@ -1,15 +1,21 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, ok, fail } from "@/lib/server";
+import { cacheGet, cacheSet } from "@/lib/analytics";
 
 /**
  * داشبورد اصلی — مقاوم در برابر داده‌های ناقص:
  * هر متریک با allSettled جدا محاسبه می‌شود تا خطای یک بخش
  * (مثلاً ناسازگاری دادهٔ قدیمی) کل داشبورد را نبندد.
+ * نسخهٔ ۶.۱: نتیجه تا ۴۵ ثانیه در حافظه کش می‌شود تا بار مکرر
+ * کوئری‌های سنگین روی MySQL حذف شود (سرعت بارگذاری داشبورد).
  */
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser(req);
   if (!user) return fail("UNAUTHORIZED", 401);
+
+  const cached = cacheGet<Record<string, unknown>>("dashboard:v3");
+  if (cached) return ok(cached);
 
   const now = new Date();
   const monthAgo = new Date(now.getTime() - 30 * 86400000);
@@ -88,7 +94,7 @@ export async function GET(req: NextRequest) {
 
   const trend = eventsPrevMonth > 0 ? Math.round(((eventsThisMonth - eventsPrevMonth) / eventsPrevMonth) * 100) : 0;
 
-  return ok({
+  const payload = {
     kpis: {
       totalEvents: { value: totalEvents, trend },
       confirmedEvents,
@@ -107,7 +113,9 @@ export async function GET(req: NextRequest) {
     monthlySeries: series,
     recentEvents,
     upcomingReserves,
-  });
+  };
+  cacheSet("dashboard:v3", payload);
+  return ok(payload);
 }
 
 function budgetsList(budgets: { id: number; title: string; amount: number; used: number; reserved: number; remained: number }[]) {

@@ -11,7 +11,7 @@ import {
   Inbox, Siren, Users, Building2, ShieldCheck, FileSignature, Target, Wallet, Receipt,
   MessageSquareText, Mail, CalendarHeart, ScrollText, LifeBuoy, Settings, BookOpen,
   ChevronsLeft, ChevronDown, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search, PlugZap,
-  FileBarChart2, PanelRightClose, PanelRightOpen, X, Network,
+  FileBarChart2, PanelRightClose, PanelRightOpen, X, Network, FolderOpen, ClipboardPlus, ListChecks,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { NameAvatar } from "@/components/shared";
+import { ChatWidget } from "@/components/chat-widget";
 import { BRAND } from "@/lib/brand";
 
 export type MetaUser = {
@@ -40,8 +41,11 @@ const NAV: NavGroup[] = [
   ]},
   { label: "ابزارها", items: [
     { key: "reports", label: "گزارش‌ساز حرفه‌ای", icon: FileBarChart2 },
+    { key: "forms", label: "فرم‌ساز", icon: ClipboardPlus },
+    { key: "checklists", label: "تیک‌های هوشمند", icon: ListChecks },
   ]},
   { label: "عملیات", items: [
+    { key: "cartable", label: "کارتابل متقاضی", icon: FolderOpen },
     { key: "events", label: "جلسات مشاوره", icon: CalendarCheck },
     { key: "group-events", label: "جلسات گروهی", icon: Users2 },
     { key: "reserves", label: "رزرو مشاوره", icon: CalendarClock },
@@ -390,6 +394,9 @@ export function AppShell({
           <p className="mt-0.5 text-[10.5px] opacity-80">{BRAND.hours} | تلفن: {BRAND.phone}</p>
         </footer>
       </div>
+
+      {/* دستیار هوشمند — ویجت شناور گوشهٔ پایین */}
+      <ChatWidget />
     </div>
   );
 }

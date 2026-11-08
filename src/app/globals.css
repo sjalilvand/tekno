@@ -230,3 +230,44 @@
 .recharts-surface {
   direction: ltr;
 }
+
+/* =====================================================================
+   شبیه‌سازی BPMN — رنگ‌بندی توکن و مراحل (نسخهٔ ۶.۱)
+   کلاس‌ها با canvas.addMarker روی عناصر دیاگرام اضافه می‌شوند.
+   ===================================================================== */
+.bpmn-canvas .sim-done .djs-visual > :nth-child(1) {
+  fill: rgba(16, 185, 129, 0.14) !important;
+  stroke: #10b981 !important;
+}
+.bpmn-canvas .sim-done .djs-visual > text {
+  fill: #047857 !important;
+}
+.bpmn-canvas .sim-active .djs-visual > :nth-child(1) {
+  fill: rgba(245, 158, 11, 0.22) !important;
+  stroke: #f59e0b !important;
+  stroke-width: 2.5px !important;
+}
+.bpmn-canvas .sim-active .djs-visual > text {
+  fill: #b45309 !important;
+  font-weight: 700;
+}
+.bpmn-canvas .sim-rejected .djs-visual > :nth-child(1) {
+  fill: rgba(244, 63, 94, 0.16) !important;
+  stroke: #f43f5e !important;
+}
+.bpmn-canvas .sim-rejected .djs-visual > text {
+  fill: #be123c !important;
+}
+.bpmn-canvas .sim-pending .djs-visual {
+  opacity: 0.42;
+}
+/* توکن متحرک — دایرهٔ نارنجی نبض‌دار */
+@keyframes token-pulse {
+  0% { r: 7; opacity: 0.9; }
+  50% { r: 10; opacity: 0.55; }
+  100% { r: 7; opacity: 0.9; }
+}
+.bpmn-canvas .sim-token {
+  animation: token-pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
