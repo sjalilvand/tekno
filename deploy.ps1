@@ -1,5 +1,7 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۵)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۶)
+#  تغییرات ۵.۶: همگام‌سازی خودکار deploy.ps1 اجراکننده با نسخهٔ مخزن +
+#  بازگردانی خودکار وابستگی‌های انتقال داده (better-sqlite3/mysql2) قبل از import
 #  تغییرات ۵.۳: توقف نمونهٔ در حال اجرا «قبل از build» — رفع خطای
 #  EPERM: unlink query_engine-windows.dll.node (قفل فایل توسط اجرای قبلی)
 #  تغییرات ۵.۲: اجرای اسکریپت‌های TS با خود Node (بدون دانلود tsx)،
@@ -164,6 +166,25 @@ function Get-Source {
     if ($LASTEXITCODE -ne 0) { Write-Fail "کلون مخزن ناموفق بود — دسترسی اینترنت/آدرس را بررسی کنید" }
     Write-Ok "مخزن در $InstallDir کلون شد"
   }
+  # همگام‌سازی خودکار اسکریپت اجراکننده — اگر deploy.ps1 از جای دیگری (مثل ریشهٔ پروژه) اجرا شود،
+  # همهٔ رفع‌اشکال‌های جدید فقط به نسخهٔ داخل app می‌رسند و اجراکننده قدیمی می‌ماند؛
+  # این بخش نسخهٔ مخزن را روی فایلِ در حال اجرا کپی می‌کند تا همیشه جدیدترین اسکریپت اجرا شود
+  $repoDeploy = Join-Path $InstallDir "deploy.ps1"
+  if (Test-Path $repoDeploy) {
+    try {
+      $runningPath = $PSCommandPath
+      if ($runningPath -and ((Resolve-Path $runningPath).Path -ne (Resolve-Path $repoDeploy).Path)) {
+        $same = $false
+        try { $same = ((Get-FileHash $runningPath -Algorithm MD5).Hash -eq (Get-FileHash $repoDeploy -Algorithm MD5).Hash) } catch {}
+        if (-not $same) {
+          Copy-Item $repoDeploy "$runningPath.bak" -Force -ErrorAction SilentlyContinue
+          Copy-Item $repoDeploy $runningPath -Force
+          Write-Ok "اسکریپت استقرار (deploy.ps1) به نسخهٔ مخزن به‌روزرسانی شد — پشتیبان: $(Split-Path $runningPath -Leaf).bak"
+          Write-Warn2 "برای اعمال کامل نسخهٔ جدید، همین دستور را یک‌بار دیگر اجرا کنید"
+        }
+      }
+    } catch { Write-Warn2 "همگام‌سازی خودکار deploy.ps1 انجام نشد: $($_.Exception.Message)" }
+  }
   if (-not (Test-Path (Join-Path $InstallDir "package.json"))) { Write-Fail "package.json در مخزن پیدا نشد" }
 }
 
@@ -282,6 +303,18 @@ function Invoke-PrismaSetup {
 # ------------------------------------------------------------- انتقال داده
 function Invoke-DataImport {
   if ($DbEngine -ne "mysql") { Write-Warn2 "انتقال داده فقط در حالت mysql معنا دارد"; return }
+  # وابستگی‌های انتقال داده (better-sqlite3/mysql2) در devDependencies اند و ممکن است
+  # توسط npm قبلی حذف شده باشند — در صورت نبود، قبل از انتقال بازگردانی می‌شوند
+  $needRestore = $false
+  foreach ($dep in @("better-sqlite3", "mysql2")) {
+    if (-not (Test-Path (Join-Path $InstallDir "node_modules\$dep"))) { $needRestore = $true }
+  }
+  if ($needRestore) {
+    Write-Warn2 "وابستگی‌های انتقال داده (better-sqlite3/mysql2) در node_modules نیست — بازگردانی…"
+    Invoke-Native { npm install --no-audit --no-fund --include=dev 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    if ($LASTEXITCODE -ne 0) { Write-Fail "بازگردانی وابستگی‌ها ناموفق بود — در پوشهٔ سامانه دستی «npm install --include=dev» اجرا کنید" }
+    Write-Ok "وابستگی‌های انتقال داده بازگردانی شدند"
+  }
   $src = Get-SqlitePath
   if (-not (Test-Path $src)) { Write-Warn2 "پشتیبان SQLite پیدا نشد: $src — انتقال رد شد"; return }
   Write-Step "انتقال داده از SQLite به MySQL"
@@ -473,7 +506,7 @@ switch ($Mode) {
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۵" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۶" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {
