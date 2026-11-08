@@ -1,2 +1,41 @@
-skills/
+# dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+build/
+next-env.d.ts
+
+# database (فایل دیتابیس محلی)
+db/*.db
+db/*.db-journal
+*.sqlite
+
+# env
+.env
+.env*.local
+
+# logs
+dev.log
+server.log
+*.log
+
+# misc
+.DS_Store
+*.pem
+tsconfig.tsbuildinfo
+
+# محیط سندباکس و فایل‌های محلی کاربر
+upload/
+download/
+extracted/
+.zscripts/
+skills/
+Caddyfile
+mini-services/
+examples/
+tests/
+agent-ctx/

@@ -1,0 +1,937 @@
+// =====================================================================
+//  سامانه مراکز خدمات روانشناسی و مشاوره «راه زندگی» — نسخه بازنویسی
+//  طراحی‌شده بر اساس ساختار واقعی دیتابیس MySQL (app2_backup — 75 جدول)
+//
+//  نکات سازگاری:
+//  • این اسکیما با SQLite (محیط دمو/توسعه) و MySQL (محیط تولید) کار می‌کند.
+//  • از انواع پرتابل (String/Int/Float/DateTime/Boolean) استفاده شده تا
+//    با تغییر فقط provider، روی MySQL واقعی مستقر شود.
+//  • فیلدهای JSON در نسخه اصلی (EventsEms و ...) به‌صورت String ذخیره می‌شوند.
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------
+// جغرافیا و لیست‌های پایه
+// ---------------------------------------------------------------------
+
+model Province {
+  id         Int     @id
+  title      String
+  apiCode    Int?    @map("API")
+  detailCode Int?
+  cities     City[]
+  centers    Center[]
+  users      User[]
+  budgetProvinces BudgetProvince[]
+
+  @@map("Provinces")
+}
+
+model City {
+  id         Int      @id
+  provinceId Int
+  title      String
+  apiCode    Int?     @map("APICode")
+  province   Province @relation(fields: [provinceId], references: [id])
+  centers    Center[]
+
+  @@map("Cities")
+}
+
+model Education {
+  id    Int    @id
+  name  String
+  users User[]
+
+  @@map("Education")
+}
+
+model Marriage {
+  id    Int    @id
+  name  String
+  users User[]
+
+  @@map("Marriage")
+}
+
+model Religion {
+  id   Int    @id
+  name String
+
+  @@map("Religion")
+}
+
+model Service {
+  id     Int     @id
+  name   String
+  short  String
+  sohaId Int
+  weight Float   @default(1)
+  events Event[]
+  referrs Referr[]
+
+  @@map("Services")
+}
+
+// ---------------------------------------------------------------------
+// نقش‌ها، کاربران و دسترسی‌ها
+// ---------------------------------------------------------------------
+
+model Role {
+  id       Int        @id
+  title    String
+  codeName String
+  users    UserRole[]
+
+  @@map("Roles")
+}
+
+model User {
+  id             Int       @id @default(autoincrement())
+  nid            BigInt    @unique
+  username       String    @unique
+  passwordHash   String
+  name           String
+  family         String
+  father         String?
+  gender         String?   // مرد / زن
+  birthday       DateTime?
+  marriageId     Int?
+  marriage       Marriage? @relation(fields: [marriageId], references: [id])
+  educationId    Int?
+  education      Education? @relation(fields: [educationId], references: [id])
+  religion       String?
+  mobile         BigInt
+  mobile2        BigInt?
+  phone          Int?
+  email          String?
+  provinceId     Int?
+  province       Province? @relation(fields: [provinceId], references: [id])
+  cityId         Int?
+  address        String?
+  zipCode        BigInt?
+  signupDate     DateTime  @default(now())
+  lastLogin      DateTime?
+  lastChangePass DateTime?
+  confirm        Int?      @default(0)
+  blocked        Boolean   @default(false)
+  checked        Boolean   @default(false)
+  avatarColor    String?   // رنگ آواتار تولیدشده
+  consultantLevel Int?     // سطح ۱ تا ۵ برای مشاوران
+  bio            String?
+
+  roles          UserRole[]
+  eventsAsClient Event[]    @relation("EventClient")
+  eventsAsAcceptor Event[]  @relation("EventAcceptor")
+  eventsAsSupervisor Event[] @relation("EventSupervisor")
+  eventsAsCenterAdmin Event[] @relation("EventCenterAdmin")
+  smsSent        Sms[]       @relation("SmsSender")
+  smsReceived    Sms[]       @relation("SmsReceiver")
+  logs           Log[]
+  sessions       Session[]
+  messagesFrom   Message[]   @relation("MsgFrom")
+  messagesTo     Message[]   @relation("MsgTo")
+  taxes          ConsultantTax[]
+  tickets        UserTicket[]
+
+  @@map("Users")
+}
+
+model UserRole {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id])
+  roleId      Int
+  role        Role     @relation(fields: [roleId], references: [id])
+  roleOption  Int      @default(0)
+  level       Int      @default(0)
+  startDate   DateTime @default(now())
+  endDate     DateTime?
+  confirmDate DateTime?
+  addedBy     Int?
+  isSuspended Boolean  @default(false)
+
+  @@index([userId])
+  @@map("UserRoles")
+}
+
+model Session {
+  id       String   @id @default(cuid())
+  userId   Int
+  user     User     @relation(fields: [userId], references: [id])
+  token    String   @unique
+  ip       String?
+  browser  String?
+  dateTime DateTime @default(now())
+
+  @@map("Sessions")
+}
+
+model Log {
+  id          Int      @id @default(autoincrement())
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id])
+  category    String
+  description String?
+  level       Int      @default(1)
+  ip          String?
+  timestamp   DateTime @default(now())
+
+  @@index([timestamp])
+  @@map("Log")
+}
+
+// ---------------------------------------------------------------------
+// مراکز
+// ---------------------------------------------------------------------
+
+model CenterCategory {
+  id      Int      @id
+  title   String
+  centers Center[]
+}
+
+model Center {
+  id          Int            @id
+  title       String
+  isEnabled   Boolean        @default(true)
+  address     String?
+  tel         String?
+  catId       Int?
+  category    CenterCategory? @relation(fields: [catId], references: [id])
+  cityId      Int
+  city        City           @relation(fields: [cityId], references: [id])
+  cityTitle   String
+  provinceId  Int
+  province    Province       @relation(fields: [provinceId], references: [id])
+  provinceTitle String
+  events      Event[]
+  bankAccounts CenterBankAccount[]
+  equipments  CenterEquipment[]
+
+  @@map("Centers")
+}
+
+model CenterBankAccount {
+  id       Int    @id @default(autoincrement())
+  centerId Int
+  center   Center @relation(fields: [centerId], references: [id])
+  bankName String?
+  sheba    String?
+  accountNo String?
+  ownerName String?
+
+  @@map("CenterBankAccount")
+}
+
+model EquipmentItem {
+  id    Int    @id
+  title String
+}
+
+model CenterEquipment {
+  id              Int           @id @default(autoincrement())
+  centerId        Int
+  center          Center        @relation(fields: [centerId], references: [id])
+  equipmentItemId Int
+  count           Int           @default(1)
+
+  @@map("CenterEquipments")
+}
+
+// ---------------------------------------------------------------------
+// قراردادهای سازمانی و تعرفه‌ها
+// ---------------------------------------------------------------------
+
+model CorporateCustomer {
+  id       Int                 @id @default(autoincrement())
+  title    String
+  discount Int                 @default(0)
+  phone    String?
+  contracts CorporateContract[]
+
+  @@map("CorporateCustomers")
+}
+
+model CorporateContract {
+  id                  Int               @id @default(autoincrement())
+  corporateCustomerId Int
+  customer            CorporateCustomer @relation(fields: [corporateCustomerId], references: [id])
+  appDefault          Boolean           @default(false)
+  startDate           DateTime
+  endDate             DateTime
+  removed             Boolean           @default(false)
+  services            CorporateContractService[]
+
+  @@map("CorporateContracts")
+}
+
+model CorporateContractService {
+  id                  Int               @id @default(autoincrement())
+  corporateContractId Int
+  contract            CorporateContract @relation(fields: [corporateContractId], references: [id])
+  serviceId           Int
+  userTariff          Int               @default(0)
+  consultantLevel1    Int               @default(0)
+  consultantLevel2    Int               @default(0)
+  consultantLevel3    Int               @default(0)
+  consultantLevel4    Int               @default(0)
+  consultantLevel5    Int               @default(0)
+  consultantDR        Int               @default(0)
+  secretaryFee        Int               @default(0)
+  supervisorFee       Int               @default(0)
+  centerFee           Int               @default(0)
+  adminFee            Int               @default(0)
+
+  @@map("CorporateContractServices")
+}
+
+model CorporateContractCoupon {
+  id       String  @id
+  contractId Int
+  used     Boolean @default(false)
+}
+
+// ---------------------------------------------------------------------
+// سهمیه‌ها (بودجه) و تخصیص‌ها
+// ---------------------------------------------------------------------
+
+model Budget {
+  id           Int       @id @default(autoincrement())
+  title        String
+  kind         String    @default("فردی") // فردی / گروهی / شغلی
+  amount       Float     @default(0)
+  remained     Float     @default(0)
+  reserved     Float     @default(0)
+  startDate    DateTime?
+  endDate      DateTime?
+  createTime   DateTime  @default(now())
+  used         Float     @default(0)
+  assigned     Float     @default(0)
+  isActive     Boolean   @default(true)
+  provinces    BudgetProvince[]
+
+  @@map("Budget")
+}
+
+model BudgetProvince {
+  id        Int     @id @default(autoincrement())
+  budgetId  Int
+  budget    Budget  @relation(fields: [budgetId], references: [id])
+  provinceId Int
+  province  Province @relation(fields: [provinceId], references: [id])
+  amount    Float   @default(0)
+  remained  Float   @default(0)
+  reserved  Float   @default(0)
+  used      Float   @default(0)
+  assigned  Float   @default(0)
+  createTime DateTime @default(now())
+
+  @@map("BudgetProvince")
+}
+
+model BudgetCity {
+  id         Int   @id @default(autoincrement())
+  budgetId   Int
+  provinceId Int
+  cityId     Int
+  amount     Float @default(0)
+  remained   Float @default(0)
+  reserved   Float @default(0)
+  used       Float @default(0)
+
+  @@map("BudgetCity")
+}
+
+model BudgetCenter {
+  id       Int   @id @default(autoincrement())
+  budgetId Int
+  centerId Int
+  amount   Float @default(0)
+  remained Float @default(0)
+  reserved Float @default(0)
+  used     Float @default(0)
+
+  @@map("BudgetCenter")
+}
+
+// ---------------------------------------------------------------------
+// جلسات مشاوره (Events) و فرم‌های بالینی
+// ---------------------------------------------------------------------
+
+model Event {
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  user           User      @relation("EventClient", fields: [userId], references: [id])
+  nid            BigInt
+  trackingCode   Int?      @unique
+  centerId       Int
+  center         Center    @relation(fields: [centerId], references: [id])
+  serviceId      Int
+  service        Service   @relation(fields: [serviceId], references: [id])
+  contractId     Int?
+  refId          BigInt?
+  emdadCheck     Boolean   @default(false)
+  contractServiceId Int?
+  userTariff     Int       @default(0)
+  isEms          Boolean   @default(false)
+  level          Int       @default(1)      // سطح مشاور
+  centerAdminId  Int?
+  centerAdmin    User?     @relation("EventCenterAdmin", fields: [centerAdminId], references: [id])
+  supervisorId   Int?
+  supervisor     User?     @relation("EventSupervisor", fields: [supervisorId], references: [id])
+  acceptorId     Int?
+  acceptor       User?     @relation("EventAcceptor", fields: [acceptorId], references: [id])
+  acceptorFee    Int       @default(0)
+  secretaryFee   Int       @default(0)
+  acceptorCodeName String?
+  acceptorLevel  Int       @default(1)
+  supervisorFee  Int       @default(0)
+  centerFee      Int       @default(0)
+  adminFee       Int       @default(0)
+  centerAdminConfirmUserId   Int?
+  centerAdminConfirmDateTime DateTime?
+  centerTechConfirmUserId    Int?
+  centerTechConfirmDateTime  DateTime?
+  operatorConfirmUserId      Int?
+  operatorConfirmDateTime    DateTime?
+  provinceSupervisorConfirmUserId    Int?
+  provinceSupervisorConfirmDateTime  DateTime?
+  supervisorConfirmUserId    Int?
+  supervisorConfirmDateTime  DateTime?
+  startDate      DateTime?
+  endDate        DateTime?
+  weight         Float     @default(1)
+  budgetUsed     Boolean   @default(false)
+  budgetReserved Boolean   @default(false)
+  status         String    @default("در انتظار پذیرش")
+  // در انتظار پذیرش | در انتظار تایید مدیر مرکز | در انتظار تایید مسئول فنی |
+  // در انتظار تایید نظارت حرفه‌ای | در انتظار تایید ناظر استان | تایید نهایی | رد شده | ناتمام
+  rejectedByUserId Int?
+  rejectedAt       DateTime?
+  rejectedComment  String?
+  topic            String?   // موضوع جلسه (EventPersonal)
+  description      String?   // شرح جلسه (EventPersonal)
+  isGroup          Boolean   @default(false)
+  groupEventId     Int?
+
+  comments     EventComment[]
+  reserves     EventReserve[]
+  psychology   EventPsychology?
+  neuroFeedback EventNeuroFeedback?
+  headMap      EventHeadMap?
+  ems          EventsEms?
+  medicines    EventMedicine[]
+  disorders    EventDisorder[]
+
+  @@index([userId])
+  @@index([acceptorId])
+  @@index([startDate])
+  @@index([status])
+  @@map("Events")
+}
+
+model EventComment {
+  id            Int      @id @default(autoincrement())
+  eventId       Int
+  event         Event    @relation(fields: [eventId], references: [id])
+  consultantNID BigInt
+  comment       String?
+  dateTime      DateTime @default(now())
+
+  @@index([eventId])
+  @@map("EventComments")
+}
+
+model EventReserve {
+  id         Int      @id @default(autoincrement())
+  eventId    Int
+  event      Event    @relation(fields: [eventId], references: [id])
+  userId     Int
+  acceptorId Int
+  date       DateTime
+
+  @@map("EventReserves")
+}
+
+model EventPsychology {
+  id                   Int      @id @default(autoincrement())
+  eventId              Int      @unique
+  event                Event    @relation(fields: [eventId], references: [id])
+  userId               Int?
+  acceptorId           Int?
+  job                  String?
+  ethnicity            String?
+  religion             String?
+  religiousBelief      String?
+  children             Int?
+  residenceQuality     String?
+  spouseInfo           String?
+  problemStart         String?
+  problemDuration      String?
+  clinicalObservation  String?
+  appearance           String?
+  psychomotorStatus    String?
+  interviewAttitude    String?
+  mood                 String?
+  affect               String?
+  speech               String?
+  perception           String?
+  thoughtContent       String?
+  thoughtProcess       String?
+  consciousness        String?
+  orientation          String?
+  memory               String?
+  concentration        String?
+  intelligence         String?
+  judgment             String?
+  insight              String?
+  medicalHistory       String?
+  familyHistory        String?
+  familyRelationships  String?
+  dateTime             DateTime @default(now())
+
+  @@map("EventPsychology")
+}
+
+model EventNeuroFeedback {
+  id             Int      @id @default(autoincrement())
+  eventId        Int      @unique
+  event          Event    @relation(fields: [eventId], references: [id])
+  protocol       String?
+  target         String?
+  visible        String?
+  action         String?
+  changed        String?
+  ezterabOld     Int?
+  ezterabNew     Int?
+  afsorOld       Int?
+  afsorNew       Int?
+  sleepProblemOld Int?
+  sleepProblemNew Int?
+  focusOld       Int?
+  focusNew       Int?
+  energyOld      Int?
+  energyNew      Int?
+  other          String?
+  dateTime       DateTime @default(now())
+
+  @@map("EventNeuroFeedback")
+}
+
+model EventHeadMap {
+  id          Int      @id @default(autoincrement())
+  eventId     Int      @unique
+  event       Event    @relation(fields: [eventId], references: [id])
+  fileId      Int?
+  description String?
+  dateTime    DateTime @default(now())
+
+  @@map("EventHeadMap")
+}
+
+model EventMedicine {
+  id       Int    @id @default(autoincrement())
+  eventId  Int
+  event    Event  @relation(fields: [eventId], references: [id])
+  name     String
+  dosage   String?
+  duration String?
+
+  @@map("EventMedicine")
+}
+
+model EventDisorder {
+  id         Int    @id @default(autoincrement())
+  eventId    Int
+  event      Event  @relation(fields: [eventId], references: [id])
+  disorderId Int
+  title      String
+
+  @@map("EventDisorders")
+}
+
+model EventReferral {
+  id            Int      @id @default(autoincrement())
+  eventId       Int
+  fromUserId    Int
+  toUserId      Int
+  reason        String?
+  dateTime      DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------
+// جلسات گروهی
+// ---------------------------------------------------------------------
+
+model Group {
+  id                  Int      @id @default(autoincrement())
+  title               String
+  corporateContractId Int?
+  centerId            Int
+  acceptorId          Int
+  creatorId           Int?
+  tel                 String?
+  address             String?
+  createDate          DateTime @default(now())
+  members             GroupMember[]
+  events              GroupEvent[]
+
+  @@map("Groups")
+}
+
+model GroupMember {
+  id        Int      @id @default(autoincrement())
+  groupId   Int
+  group     Group    @relation(fields: [groupId], references: [id])
+  userId    Int
+  nid       BigInt
+  refId     BigInt?
+  dateTime  DateTime @default(now())
+
+  @@index([groupId])
+  @@map("GroupMembers")
+}
+
+model GroupEvent {
+  id               Int       @id @default(autoincrement())
+  groupId          Int
+  group            Group     @relation(fields: [groupId], references: [id])
+  topic            String
+  description      String?
+  startDate        DateTime?
+  endDate          DateTime?
+  sessionNumber    Int       @default(1)
+  acceptorId       Int?
+  acceptorCodeName String?
+  acceptorLevel    Int       @default(1)
+  supervisorId     Int?
+  centerAdminId    Int?
+  acceptorFee      Int       @default(0)
+  secretaryFee     Int       @default(0)
+  serviceId        Int?
+  contractId       Int?
+  userTariff       Int       @default(0)
+  budgetReserved   Boolean   @default(false)
+  budgetUsed       Boolean   @default(false)
+  weight           Float     @default(1)
+  centerId         Int?
+  operatorConfirmUserId   Int?
+  operatorConfirmDateTime DateTime?
+  supervisorConfirmUserId Int?
+  supervisorConfirmDateTime DateTime?
+  status           String    @default("در انتظار تایید")
+  members          GroupEventMember[]
+
+  @@index([groupId])
+  @@map("GroupEvents")
+}
+
+model GroupEventMember {
+  id           Int     @id @default(autoincrement())
+  userId       Int
+  groupId      Int
+  groupEventId Int?
+  groupEvent   GroupEvent? @relation(fields: [groupEventId], references: [id])
+  serviceId    Int?
+  trackingCode Int?
+  refId        BigInt?
+  dateTime     DateTime   @default(now())
+
+  @@map("GroupEventMember")
+}
+
+// ---------------------------------------------------------------------
+// ارجاعات سها و درخواست‌های رزرو
+// ---------------------------------------------------------------------
+
+model Referr {
+  id              Int      @id @default(autoincrement())
+  refId           BigInt   @unique
+  userId          Int
+  userName        String?
+  userNid         BigInt?
+  userMobile      BigInt?
+  serviceId       Int
+  service         Service  @relation(fields: [serviceId], references: [id])
+  description     String?
+  isReferr        Boolean  @default(false)
+  provinceId      Int
+  cityId          Int?
+  centerId        Int?
+  acceptorId      Int?
+  adminReferrerId Int?
+  sessionsCount   Int      @default(0)
+  status          String   @default("در انتظار") // در انتظار | پذیرش‌شده | ارجاع‌شده | منقضی
+  creationDate    DateTime @default(now())
+  followUps       ReferrFollowUp[]
+
+  @@index([status])
+  @@index([creationDate])
+  @@map("Referrs")
+}
+
+model ReferrFollowUp {
+  id        Int      @id @default(autoincrement())
+  referrId  Int
+  referr    Referr   @relation(fields: [referrId], references: [id])
+  userId    Int
+  comment   String
+  createdAt DateTime @default(now())
+
+  @@map("ReferrFollowUps")
+}
+
+model ReferrRequest {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  userName        String?
+  description     String?
+  provinceId      Int
+  cityId          Int?
+  centerId        Int?
+  adminReferrerId Int?
+  status          String   @default("در انتظار بررسی") // در انتظار بررسی | تایید شده | رد شده
+  creationDate    DateTime @default(now())
+  editionDate     DateTime?
+
+  @@map("ReferrsRequest")
+}
+
+// ---------------------------------------------------------------------
+// موارد حاد (EMS)
+// ---------------------------------------------------------------------
+
+model EventsEms {
+  id                    Int      @id @default(autoincrement())
+  eventId               Int      @unique
+  event                 Event    @relation(fields: [eventId], references: [id])
+  secretaryNID          BigInt?
+  emsType               String?  // JSON — انواع مورد حاد
+  suicidalFrom          String?  // JSON — عوامل خودکشی
+  psychiatricDisorders  String?  // JSON
+  socialFactors         String?  // JSON
+  protectiveFactors     String?  // JSON
+  suggestedActions      String?  // JSON
+  actionsTaken          String?
+  financialAssistanceRequest Int  @default(0)
+  dateTime              DateTime @default(now())
+  hadPaymentAmount      BigInt   @default(0)
+  hadPaymentStatus      String?  // بدون درخواست | در انتظار بررسی | تایید شده | پرداخت شده
+  hadPaymentDescription String?
+  confirmedByUserId     Int?
+  severity              String   @default("متوسط") // کم | متوسط | بالا
+  comments              EventEmsComment[]
+
+  @@map("EventsEms")
+}
+
+model EventEmsComment {
+  id         Int      @id @default(autoincrement())
+  eventEmsId Int
+  ems        EventsEms @relation(fields: [eventEmsId], references: [id])
+  userId     Int?
+  comment    String
+  date       DateTime @default(now())
+
+  @@map("EventEmsComments")
+}
+
+// ---------------------------------------------------------------------
+// مشاوران: تحصیلات، دوره‌ها، تجربه و مالیات
+// ---------------------------------------------------------------------
+
+model ConsultantEducation {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  consultantNID   BigInt?
+  field           String?
+  orientation     String?
+  grade           String?
+  university      String?
+  graduationDate  String?
+  dateTime        DateTime @default(now())
+  file            String?
+
+  @@map("ConsultantEducation")
+}
+
+model ConsultantCourse {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  title         String
+  institute     String?
+  hours         Int?
+  year          String?
+  dateTime      DateTime @default(now())
+
+  @@map("ConsultantCourses")
+}
+
+model ConsultantExperience {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  title      String
+  place      String?
+  fromYear   String?
+  toYear     String?
+
+  @@map("ConsultantExperience")
+}
+
+model ConsultantTax {
+  id                 Int      @id @default(autoincrement())
+  userId             Int?
+  user               User?    @relation(fields: [userId], references: [id])
+  nid                BigInt
+  year               Int
+  month              Int
+  taxAmount          BigInt   @default(0)
+  exemptionMonths    Int      @default(0)
+  multiEmployerMonth Int      @default(0)
+  multiEmployerYear  Int      @default(0)
+  totalPayment       BigInt   @default(0)
+  createdByUserId    Int?
+  createdAt          DateTime @default(now())
+
+  @@index([year, month])
+  @@map("ConsultantTax")
+}
+
+// ---------------------------------------------------------------------
+// پیامک، پیام، فایل و اعلان
+// ---------------------------------------------------------------------
+
+model Sms {
+  id          Int      @id @default(autoincrement())
+  senderId    Int
+  sender      User     @relation("SmsSender", fields: [senderId], references: [id])
+  receiverId  Int
+  receiver    User     @relation("SmsReceiver", fields: [receiverId], references: [id])
+  number      BigInt?
+  message     String
+  response    String?
+  efforts     Int      @default(0)
+  status      String   @default("ارسال شده") // در صف | ارسال شده | ناموفق
+  updateTime  DateTime @default(now())
+  createTime  DateTime @default(now())
+
+  @@index([createTime])
+  @@map("SMS")
+}
+
+model Message {
+  id                Int      @id @default(autoincrement())
+  fromUserId        Int
+  fromUser          User     @relation("MsgFrom", fields: [fromUserId], references: [id])
+  toUserId          Int?
+  toUser            User?    @relation("MsgTo", fields: [toUserId], references: [id])
+  subject           String?
+  text              String?
+  fileId            Int?
+  targetRole        String?
+  targetProvinceId  Int?
+  timestamp         DateTime @default(now())
+  star              Boolean  @default(false)
+  isRead            Boolean  @default(false)
+
+  @@map("Messages")
+}
+
+model File {
+  id             Int      @id @default(autoincrement())
+  userNID        BigInt
+  name           String
+  location       String
+  uploadDateTime DateTime @default(now())
+
+  @@map("Files")
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  title     String
+  body      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("Notifications")
+}
+
+// ---------------------------------------------------------------------
+// تنظیمات، مناسبت‌ها، تیکت و راهنما
+// ---------------------------------------------------------------------
+
+model Setting {
+  name   String  @id
+  value  String?
+  group  String  @default("عمومی")
+
+  @@map("Settings")
+}
+
+model SpecialOccasion {
+  id             Int      @id @default(autoincrement())
+  title          String
+  imagePath      String?
+  displayDate    DateTime
+  isActive       Boolean  @default(true)
+  createdByUserId Int?
+  createdAt      DateTime @default(now())
+
+  @@map("SpecialOccasions")
+}
+
+model UserTicket {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id])
+  subject     String
+  text        String?
+  status      String   @default("باز") // باز | در حال بررسی | بسته
+  priority    String   @default("متوسط")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now())
+
+  @@map("UserTicket")
+}
+
+model Help {
+  id       Int    @id @default(autoincrement())
+  roleId   Int?
+  title    String
+  fileUrl  String?
+
+  @@map("Helps")
+}
+
+model ApiToken {
+  id        Int      @id @default(autoincrement())
+  title     String
+  token     String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("ApiTokens")
+}
+
+model ApiReport {
+  id         Int      @id @default(autoincrement())
+  type       String
+  data       String?
+  efforts    Int      @default(0)
+  status     String   @default("موفق")
+  createTime DateTime @default(now())
+  updateTime DateTime?
+
+  @@map("ApiReports")
+}
