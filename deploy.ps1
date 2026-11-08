@@ -1,5 +1,5 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۴)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۵)
 #  تغییرات ۵.۳: توقف نمونهٔ در حال اجرا «قبل از build» — رفع خطای
 #  EPERM: unlink query_engine-windows.dll.node (قفل فایل توسط اجرای قبلی)
 #  تغییرات ۵.۲: اجرای اسکریپت‌های TS با خود Node (بدون دانلود tsx)،
@@ -224,7 +224,11 @@ function Install-Dependencies {
 
 # ------------------------------------------------------------- همگام‌سازی اسکیمای MySQL
 # در حالت import هم اجرا می‌شود تا تغییر ساختار (مثل حذف کلیدهای یکتای ناسازگار با دادهٔ legacy) اعمال شود
+# با -AllowReset: اگر push معمولی به‌خاطر ناسازگاری ساختار موجود شکست خورد
+# (مثل «Duplicate foreign key constraint name»)، ساختار از نو ساخته می‌شود؛
+# داده‌ها بلافاصله بعد از آن در مرحلهٔ انتقال کامل دوباره وارد می‌شوند (منبع: app.sqlite)
 function Invoke-MysqlSchemaSync {
+  param([switch]$AllowReset)
   Push-Location $InstallDir
   try {
     Write-Step "اتصال به MySQL واقعی — prisma db push --schema prisma/schema.mysql.prisma"
@@ -233,12 +237,27 @@ function Invoke-MysqlSchemaSync {
     if ($LASTEXITCODE -ne 0) { Write-Fail "prisma generate (mysql) ناموفق بود" }
     Invoke-Native { npx prisma db push --schema prisma/schema.mysql.prisma --accept-data-loss 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
     if ($LASTEXITCODE -ne 0) {
-      Write-Warn2 "prisma db push ناموفق بود — احتمالاً دیتابیس «$MysqlDatabase» وجود ندارد"
-      Write-Host "  ایجاد دستی دیتابیس:" -ForegroundColor Yellow
-      Write-Host "    mysql -u $MysqlUser -p -e `"CREATE DATABASE $MysqlDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`"" -ForegroundColor Yellow
-      exit 1
+      if ($AllowReset) {
+        Write-Warn2 "ساختار فعلی MySQL با اسکیمای جدید سازگار نیست (ناسازگاری کلیدهای خارجی/یکتای قدیمی)"
+        Write-Host "  بازسازی کامل ساختار انجام می‌شود — همهٔ داده‌ها در مرحلهٔ بعد از app.sqlite دوباره منتقل می‌شوند" -ForegroundColor Yellow
+        # وضعیت انتقال قبلی باید پاک شود تا همهٔ جدول‌ها دوباره منتقل شوند
+        $statusFile = Join-Path $DataDir "import_status.json"
+        if (Test-Path $statusFile) { Remove-Item $statusFile -Force; Write-Host "  وضعیت انتقال قبلی پاک شد ($statusFile)" -ForegroundColor DarkGray }
+        Invoke-Native { npx prisma db push --schema prisma/schema.mysql.prisma --force-reset --skip-generate 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+        if ($LASTEXITCODE -ne 0) { Write-Fail "بازسازی ساختار MySQL هم ناموفق بود — دیتابیس «$MysqlDatabase» را از نو بسازید" }
+        Write-Ok "ساختار جداول از نو ساخته شد (۵۷ جدول) — انتقال کامل داده در مرحلهٔ بعد"
+      } else {
+        Write-Warn2 "prisma db push ناموفق بود — احتمالاً دیتابیس «$MysqlDatabase» وجود ندارد"
+        Write-Host "  ایجاد دستی دیتابیس:" -ForegroundColor Yellow
+        Write-Host "    mysql -u $MysqlUser -p -e `"CREATE DATABASE $MysqlDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`"" -ForegroundColor Yellow
+        Write-Host "  اگر دیتابیس هست ولی ساختار قدیمی است، یک‌بار اجرا کنید:" -ForegroundColor Yellow
+        Write-Host "    .\deploy.ps1 -Mode import -DbEngine mysql -MysqlUser $MysqlUser -MysqlDatabase $MysqlDatabase" -ForegroundColor Yellow
+        Write-Host "  (حالت import خودش ساختار را بازسازی و داده‌ها را کامل منتقل می‌کند)" -ForegroundColor Yellow
+        exit 1
+      }
+    } else {
+      Write-Ok "ساختار جداول روی MySQL ایجاد/به‌روزرسانی شد"
     }
-    Write-Ok "ساختار جداول روی MySQL ایجاد/به‌روزرسانی شد"
   } finally {
     Pop-Location
   }
@@ -454,7 +473,7 @@ switch ($Mode) {
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۴" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۵" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {
@@ -475,5 +494,5 @@ switch ($Mode) {
   "stop"    { Stop-App }
   "restart" { Stop-App; Start-App }
   "status"  { Show-Status }
-  "import"  { Write-DotEnv; if ($DbEngine -eq "mysql") { Invoke-MysqlSchemaSync }; Invoke-DataImport; Invoke-SeedAdmin }
+  "import"  { Write-DotEnv; if ($DbEngine -eq "mysql") { Invoke-MysqlSchemaSync -AllowReset }; Invoke-DataImport; Invoke-SeedAdmin }
 }
