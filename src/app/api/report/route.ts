@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, ok, fail } from "@/lib/server";
 import { monthLabel } from "@/lib/jalali";
+import { normalizeDateInput } from "@/lib/jdate";
 
 // =====================================================================
 // گزارش‌ساز حرفه‌ای — موتور گزارش‌گیری عمومی
@@ -40,15 +41,16 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 function dateFrom(v?: string): Date | null {
-  if (!v) return null;
-  const d = new Date(v);
+  const iso = normalizeDateInput(v); // پذیرش همزمان تاریخ شمسی (۱۴۰۴/۰۸/۱۶) و میلادی
+  if (!iso) return null;
+  const d = new Date(iso + "T00:00:00.000");
   return isNaN(d.getTime()) ? null : d;
 }
 function dateTo(v?: string): Date | null {
-  const d = dateFrom(v);
-  if (!d) return null;
-  d.setHours(23, 59, 59, 999);
-  return d;
+  const iso = normalizeDateInput(v);
+  if (!iso) return null;
+  const d = new Date(iso + "T23:59:59.999");
+  return isNaN(d.getTime()) ? null : d;
 }
 
 export async function POST(req: NextRequest) {

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, ok, fail } from "@/lib/server";
 import { monthLabel } from "@/lib/jalali";
+import { normalizeDateInput } from "@/lib/jdate";
 
 // =====================================================================
 // موتور داشبوردهای مدیریتی — توصیفی / تحلیلی / تفسیری / کشف خطا / پیشنهادی
@@ -16,10 +17,23 @@ export async function GET(req: NextRequest) {
   if (!user) return fail("UNAUTHORIZED", 401);
 
   const now = new Date();
-  const yearAgo = new Date(now.getTime() - 365 * 86400000);
-  const d60 = new Date(now.getTime() - 60 * 86400000);
-  const d14 = new Date(now.getTime() - 14 * 86400000);
-  const d7 = new Date(now.getTime() - 7 * 86400000);
+
+  // پارامترهای اختیاری فیلتر: from/to (شمسی یا میلادی) و centerId
+  const sp = req.nextUrl.searchParams;
+  const fromIso = normalizeDateInput(sp.get("from"));
+  const winFrom = fromIso ? new Date(fromIso + "T00:00:00.000Z") : new Date(now.getTime() - 365 * 86400000);
+  const winToIso = normalizeDateInput(sp.get("to"));
+  const winTo = winToIso ? new Date(winToIso + "T23:59:59.999Z") : now;
+  const centerId = Number(sp.get("centerId")) || null;
+  const evWhere: any = {
+    startDate: { gte: winFrom, lte: winTo, not: null },
+    ...(centerId ? { centerId } : {}),
+  };
+
+  const yearAgo = winFrom;
+  const d60 = new Date(winTo.getTime() - 60 * 86400000);
+  const d14 = new Date(winTo.getTime() - 14 * 86400000);
+  const d7 = new Date(winTo.getTime() - 7 * 86400000);
 
   async function settled<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
     try {
@@ -34,7 +48,7 @@ export async function GET(req: NextRequest) {
   const yearEvents = await settled(
     () =>
       db.event.findMany({
-        where: { startDate: { gte: yearAgo, not: null } },
+        where: evWhere,
         select: { startDate: true, status: true, serviceId: true, centerId: true, userId: true, userTariff: true, isEms: true },
         take: 200000,
       }),
@@ -51,9 +65,9 @@ export async function GET(req: NextRequest) {
     settled(() => db.user.count(), 0),
     settled(() => db.user.count({ where: { roles: { some: { role: { title: { in: ["مشاور", "روانپزشک"] } } } } } }), 0),
     settled(() => db.center.count({ where: { isEnabled: true } }), 0),
-    settled(() => db.eventReserve.count({ where: { date: { gte: yearAgo } } }), 0),
+    settled(() => db.eventReserve.count({ where: { date: { gte: winFrom, lte: winTo }, ...(centerId ? { event: { centerId } } : {}) } }), 0),
     settled(
-      () => db.event.groupBy({ by: ["userId"], where: { status: "تایید نهایی", startDate: { gte: yearAgo } }, _count: true }),
+      () => db.event.groupBy({ by: ["userId"], where: { status: "تایید نهایی", ...evWhere }, _count: true }),
       [] as { userId: number; _count: number }[]
     ),
     settled(() => db.center.findMany({ select: { id: true, title: true } }), []),
@@ -62,7 +76,7 @@ export async function GET(req: NextRequest) {
     settled(() => db.event.count({ where: { status: "تایید نهایی", topic: null } }), 0),
     settled(() => db.event.count({ where: { status: "تایید نهایی", userTariff: 0 } }), 0),
     settled(
-      () => db.event.groupBy({ by: ["trackingCode"], where: { trackingCode: { not: null }, startDate: { gte: yearAgo } }, _count: true }),
+      () => db.event.groupBy({ by: ["trackingCode"], where: { trackingCode: { not: null }, ...evWhere }, _count: true }),
       [] as { trackingCode: number | null; _count: number }[]
     ),
     settled(() => db.user.groupBy({ by: ["nid"], where: { nid: { gte: 0 } }, _count: true }), [] as { nid: bigint; _count: number }[]),
@@ -76,12 +90,12 @@ export async function GET(req: NextRequest) {
   // ----------------------- سری‌های زمانی -----------------------
   const daily = new Map<string, { date: Date; count: number; income: number }>();
   for (let i = 59; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const d = new Date(winTo.getFullYear(), winTo.getMonth(), winTo.getDate() - i);
     daily.set(d.toISOString().slice(0, 10), { date: d, count: 0, income: 0 });
   }
   const monthly = new Map<string, { count: number; income: number; sample: Date }>();
   for (let i = 11; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const d = new Date(winTo.getFullYear(), winTo.getMonth() - i, 1);
     monthly.set(`${d.getFullYear()}-${d.getMonth()}`, { count: 0, income: 0, sample: d });
   }
   const weekday = new Array(7).fill(0) as number[];
@@ -162,7 +176,7 @@ export async function GET(req: NextRequest) {
     () =>
       db.event.groupBy({
         by: ["acceptorId"],
-        where: { status: "تایید نهایی", startDate: { gte: yearAgo }, acceptorId: { not: null } },
+        where: { status: "تایید نهایی", ...evWhere, acceptorId: { not: null } },
         _count: true,
         _sum: { acceptorFee: true },
       }),
@@ -327,6 +341,7 @@ export async function GET(req: NextRequest) {
 
   return ok({
     generatedAt: now.toISOString(),
+    window: { from: winFrom.toISOString(), to: winTo.toISOString(), centerId },
     kpis: {
       events365: yearEvents.length,
       confirmed365,

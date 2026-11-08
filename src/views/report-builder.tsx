@@ -4,6 +4,7 @@
 import * as React from "react";
 import { PageHeader, SectionCard, LoadingView } from "@/components/shared";
 import { BarChartX } from "@/components/charts";
+import { JalaliDatePicker } from "@/components/ui/jalali-date-picker";
 import { faNum, faMoney, jDate, jDateTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { BRAND } from "@/lib/brand";
@@ -13,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   CalendarCheck, Wallet, Users, CalendarClock, ArrowLeftRight, MessageSquareText,
-  Play, Download, Printer, Save, FolderOpen, Trash2, FileBarChart2, X,
+  Play, Download, Printer, Save, FolderOpen, Trash2, FileBarChart2, X, Database, Info,
 } from "lucide-react";
 
 // ---------------- تعریف منابع گزارش ----------------
@@ -41,6 +42,11 @@ type ReportResponse = {
 
 type SavedPreset = { name: string; config: RunConfig };
 
+type CoverageData = {
+  sources: { key: string; label: string; count: number; first: string | null; last: string | null }[];
+  checkedAt: string;
+};
+
 type RunConfig = {
   dataset: DatasetKey;
   mode: "detail" | "summary";
@@ -57,6 +63,7 @@ const PRESET_KEY = "raz-report-presets";
 
 export function ReportBuilderView() {
   const meta = useQuery<any>(() => api("/api/meta"), []);
+  const coverage = useQuery<CoverageData>(() => api("/api/bi/coverage"), []);
 
   const [dataset, setDataset] = React.useState<DatasetKey>("events");
   const [mode, setMode] = React.useState<"detail" | "summary">("detail");
@@ -216,19 +223,26 @@ export function ReportBuilderView() {
       {/* ۱) منبع داده */}
       <SectionCard title="۱) منبع داده" bodyClass="p-4">
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
-          {DATASETS.map((d) => (
-            <button
-              key={d.key}
-              onClick={() => changeDataset(d.key)}
-              className={`rounded-xl border p-3 text-right transition-all ${dataset === d.key ? "border-ring bg-accent shadow-sm" : "bg-card hover:border-ring/60"}`}
-            >
-              <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${dataset === d.key ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-                {d.icon}
-              </span>
-              <p className="mt-2 text-xs font-bold">{d.label}</p>
-              <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{d.desc}</p>
-            </button>
-          ))}
+          {DATASETS.map((d) => {
+            const cov = coverage.data?.sources.find((s) => s.key === d.key);
+            return (
+              <button
+                key={d.key}
+                onClick={() => changeDataset(d.key)}
+                className={`rounded-xl border p-3 text-right transition-all ${dataset === d.key ? "border-ring bg-accent shadow-sm" : "bg-card hover:border-ring/60"}`}
+              >
+                <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${dataset === d.key ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                  {d.icon}
+                </span>
+                <p className="mt-2 text-xs font-bold">{d.label}</p>
+                <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{d.desc}</p>
+                <span className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${cov && cov.count > 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300" : "bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-300"}`}>
+                  <Database className="h-3 w-3" />
+                  {cov ? `${faNum(cov.count)} رکورد` : "..."}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </SectionCard>
 
@@ -276,12 +290,12 @@ export function ReportBuilderView() {
             </div>
           )}
           <div className="space-y-1">
-            <Label className="text-[11px]">از تاریخ</Label>
-            <Input type="date" value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} className="h-9 text-xs" />
+            <Label className="text-[11px]">از تاریخ (شمسی)</Label>
+            <JalaliDatePicker value={filters.from} onChange={(v) => setFilters((f) => ({ ...f, from: v }))} placeholder="انتخاب تاریخ" />
           </div>
           <div className="space-y-1">
-            <Label className="text-[11px]">تا تاریخ</Label>
-            <Input type="date" value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} className="h-9 text-xs" />
+            <Label className="text-[11px]">تا تاریخ (شمسی)</Label>
+            <JalaliDatePicker value={filters.to} onChange={(v) => setFilters((f) => ({ ...f, to: v }))} placeholder="انتخاب تاریخ" />
           </div>
           {mode === "summary" && (
             <>
@@ -439,7 +453,15 @@ export function ReportBuilderView() {
 function ResultTable({ result, mode, columns }: { result: ReportResponse; mode: "detail" | "summary"; columns: string[] }) {
   const rows = result.rows ?? [];
   if (!rows.length) {
-    return <p className="p-10 text-center text-sm text-muted-foreground">رکوردی با این فیلترها یافت نشد</p>;
+    return (
+      <div className="flex flex-col items-center gap-2 p-10 text-center">
+        <Info className="h-7 w-7 text-muted-foreground/50" />
+        <p className="text-sm font-bold">رکوردی با این فیلترها یافت نشد</p>
+        <p className="max-w-md text-xs leading-6 text-muted-foreground">
+          اگر تعداد رکورد منبع بالای صفحه صفر است یعنی دادهٔ این منبع در پایگاه‌داده وجود ندارد (انتقال داده اجرا نشده). اگر منبع داده دارد، بازهٔ تاریخ یا فیلتر وضعیت را بردارید و دوباره اجرا کنید.
+        </p>
+      </div>
+    );
   }
   if (mode === "summary") {
     return (
