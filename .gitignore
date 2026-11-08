@@ -40,3 +40,4 @@ mini-services/
 examples/
 tests/
 agent-ctx/
+.bpmn-test.mjs

@@ -142,6 +142,11 @@ model User {
   taxes          ConsultantTax[]
   tickets        UserTicket[]
 
+  @@index([signupDate])
+  @@index([gender])
+  @@index([marriageId])
+  @@index([educationId])
+  @@index([mobile])
   @@map("Users")
 }
 
@@ -219,6 +224,7 @@ model Center {
   bankAccounts CenterBankAccount[]
   equipments  CenterEquipment[]
 
+  @@index([provinceId])
   @@map("Centers")
 }
 
@@ -467,6 +473,7 @@ model EventReserve {
   date       DateTime
   @@index([date])
 
+  @@index([eventId])
   @@map("EventReserves")
 }
 
@@ -644,6 +651,9 @@ model GroupEvent {
   members          GroupEventMember[]
 
   @@index([groupId])
+  @@index([startDate])
+  @@index([centerId])
+  @@index([status])
   @@map("GroupEvents")
 }
 
@@ -688,6 +698,7 @@ model Referr {
 
   @@index([status])
   @@index([creationDate])
+  @@index([provinceId])
   @@map("Referrs")
 }
 
@@ -745,6 +756,8 @@ model EventsEms {
 
   // یونیک حذف شد — در دادهٔ legacy چند فرم EMS برای یک جلسه ثبت شده
   @@index([eventId])
+  @@index([severity])
+  @@index([hadPaymentStatus])
   @@map("EventsEms")
 }
 
@@ -839,6 +852,7 @@ model Sms {
   createTime  DateTime @default(now())
 
   @@index([createTime])
+  @@index([status])
   @@map("SMS")
 }
 

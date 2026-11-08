@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  id="Defs_financecycle"
+                  targetNamespace="http://raz.ir/bpmn">
+  <bpmn:process id="Process_financecycle" isExecutable="false">
+    <bpmn:startEvent id="s" name="تایید نهایی جلسه" />     <bpmn:task id="calc" name="محاسبهٔ سهم‌ها (مشاور/مرکز/سامانه)" />     <bpmn:task id="reg" name="ثبت حقوق‌و‌دستمزد مشاور" />     <bpmn:exclusiveGateway id="g_month" name="پایان ماه؟" />     <bpmn:task id="tax" name="محاسبهٔ مالیات مشاوران" />     <bpmn:task id="wait" name="ادامهٔ ثبت جلسات ماه" />     <bpmn:task id="report" name="تهیهٔ گزارش تسویهٔ ماهانه" />     <bpmn:exclusiveGateway id="g_pay" name="تایید پرداخت؟" />     <bpmn:task id="pay" name="پرداخت تسویه و اعلام به مشاور" />     <bpmn:endEvent id="e_ok" name="تسویه کامل شد" />     <bpmn:endEvent id="e_rej" name="بازگشت برای اصلاح" />
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="s" targetRef="calc" />     <bpmn:sequenceFlow id="Flow_2" sourceRef="calc" targetRef="reg" />     <bpmn:sequenceFlow id="Flow_3" sourceRef="reg" targetRef="g_month" />     <bpmn:sequenceFlow id="Flow_4" sourceRef="g_month" targetRef="tax" name="بله" />     <bpmn:sequenceFlow id="Flow_5" sourceRef="g_month" targetRef="wait" name="خیر" />     <bpmn:sequenceFlow id="Flow_6" sourceRef="wait" targetRef="reg" />     <bpmn:sequenceFlow id="Flow_7" sourceRef="tax" targetRef="report" />     <bpmn:sequenceFlow id="Flow_8" sourceRef="report" targetRef="g_pay" />     <bpmn:sequenceFlow id="Flow_9" sourceRef="g_pay" targetRef="pay" name="بله" />     <bpmn:sequenceFlow id="Flow_10" sourceRef="g_pay" targetRef="e_rej" name="خیر" />     <bpmn:sequenceFlow id="Flow_11" sourceRef="pay" targetRef="e_ok" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_financecycle">
+    <bpmndi:BPMNPlane id="Plane_financecycle" bpmnElement="Process_financecycle">
+        <bpmndi:BPMNShape id="Shape_s" bpmnElement="s">
+          <dc:Bounds x="120" y="240" width="36" height="36" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="83" y="282" width="110" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_calc" bpmnElement="calc">
+          <dc:Bounds x="300" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="304" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_reg" bpmnElement="reg">
+          <dc:Bounds x="480" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="484" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_g_month" bpmnElement="g_month">
+          <dc:Bounds x="660" y="240" width="50" height="50" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="635" y="298" width="100" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_tax" bpmnElement="tax">
+          <dc:Bounds x="840" y="110" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="844" y="126" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_wait" bpmnElement="wait">
+          <dc:Bounds x="840" y="370" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="844" y="386" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_report" bpmnElement="report">
+          <dc:Bounds x="1020" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1024" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_g_pay" bpmnElement="g_pay">
+          <dc:Bounds x="1200" y="240" width="50" height="50" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1175" y="298" width="100" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_pay" bpmnElement="pay">
+          <dc:Bounds x="1380" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1384" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_e_ok" bpmnElement="e_ok">
+          <dc:Bounds x="1560" y="240" width="36" height="36" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1523" y="282" width="110" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_e_rej" bpmnElement="e_rej">
+          <dc:Bounds x="1380" y="370" width="36" height="36" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1343" y="412" width="110" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNEdge id="Edge_1" bpmnElement="Flow_1">
+          <di:waypoint x="156" y="258" />           <di:waypoint x="228" y="258" />           <di:waypoint x="228" y="280" />           <di:waypoint x="300" y="280" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_2" bpmnElement="Flow_2">
+          <di:waypoint x="400" y="280" />           <di:waypoint x="480" y="280" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_3" bpmnElement="Flow_3">
+          <di:waypoint x="580" y="280" />           <di:waypoint x="620" y="280" />           <di:waypoint x="620" y="265" />           <di:waypoint x="660" y="265" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_4" bpmnElement="Flow_4">
+          <di:waypoint x="710" y="265" />           <di:waypoint x="775" y="265" />           <di:waypoint x="775" y="150" />           <di:waypoint x="840" y="150" />
+          <bpmndi:BPMNLabel><dc:Bounds x="735" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_5" bpmnElement="Flow_5">
+          <di:waypoint x="710" y="265" />           <di:waypoint x="775" y="265" />           <di:waypoint x="775" y="410" />           <di:waypoint x="840" y="410" />
+          <bpmndi:BPMNLabel><dc:Bounds x="735" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_6" bpmnElement="Flow_6">
+          <di:waypoint x="940" y="410" />           <di:waypoint x="710" y="410" />           <di:waypoint x="710" y="280" />           <di:waypoint x="480" y="280" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_7" bpmnElement="Flow_7">
+          <di:waypoint x="940" y="150" />           <di:waypoint x="980" y="150" />           <di:waypoint x="980" y="280" />           <di:waypoint x="1020" y="280" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_8" bpmnElement="Flow_8">
+          <di:waypoint x="1120" y="280" />           <di:waypoint x="1160" y="280" />           <di:waypoint x="1160" y="265" />           <di:waypoint x="1200" y="265" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_9" bpmnElement="Flow_9">
+          <di:waypoint x="1250" y="265" />           <di:waypoint x="1315" y="265" />           <di:waypoint x="1315" y="280" />           <di:waypoint x="1380" y="280" />
+          <bpmndi:BPMNLabel><dc:Bounds x="1275" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_10" bpmnElement="Flow_10">
+          <di:waypoint x="1250" y="265" />           <di:waypoint x="1315" y="265" />           <di:waypoint x="1315" y="388" />           <di:waypoint x="1380" y="388" />
+          <bpmndi:BPMNLabel><dc:Bounds x="1275" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_11" bpmnElement="Flow_11">
+          <di:waypoint x="1480" y="280" />           <di:waypoint x="1520" y="280" />           <di:waypoint x="1520" y="258" />           <di:waypoint x="1560" y="258" />
+          
+        </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

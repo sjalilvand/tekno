@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     try { return await fn(); } catch { return fallback; }
   }
 
-  const [events, reserves, users, referrs, sms, centers, services] = await Promise.all([
+  const [events, reserves, users, referrs, sms, centers, services, ems, groupEvents, logs, taxes, budgets, rrequests] = await Promise.all([
     settled(async () => {
       const [c, f] = await Promise.all([
         db.event.count(),
@@ -35,15 +35,27 @@ export async function GET(req: NextRequest) {
     settled(() => db.sms.count(), 0),
     settled(() => db.center.count(), 0),
     settled(() => db.service.count(), 0),
+    settled(() => db.eventsEms.count(), 0),
+    settled(() => db.groupEvent.count(), 0),
+    settled(() => db.log.count(), 0),
+    settled(() => db.consultantTax.count(), 0),
+    settled(() => db.budget.count(), 0),
+    settled(() => db.referrRequest.count(), 0),
   ]);
 
   return ok({
     sources: [
       { key: "events", label: "جلسات مشاوره", count: events.count, first: events.first, last: events.last },
+      { key: "group-events", label: "جلسات گروهی", count: groupEvents, first: null, last: null },
+      { key: "ems", label: "موارد حاد", count: ems, first: null, last: null },
       { key: "reserves", label: "رزروها", count: reserves.count, first: reserves.first, last: reserves.last },
+      { key: "reserve-requests", label: "درخواست‌های رزرو", count: rrequests, first: null, last: null },
       { key: "users", label: "کاربران", count: users, first: null, last: null },
       { key: "referrals", label: "ارجاعات سها", count: referrs, first: null, last: null },
       { key: "sms", label: "پیامک‌ها", count: sms, first: null, last: null },
+      { key: "logs", label: "لاگ فعالیت", count: logs, first: null, last: null },
+      { key: "taxes", label: "مالیات مشاوران", count: taxes, first: null, last: null },
+      { key: "budgets", label: "سهمیه‌ها", count: budgets, first: null, last: null },
       { key: "centers", label: "مراکز", count: centers, first: null, last: null },
       { key: "services", label: "خدمات", count: services, first: null, last: null },
     ],

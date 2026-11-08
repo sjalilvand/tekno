@@ -1,18 +1,22 @@
 "use client";
-// داشبوردهای مدیریتی — توصیفی / تحلیلی / تفسیری / کشف خطا / پیشنهادی
-// با فیلتر بازهٔ تاریخ شمسی + مرکز، پوشش داده‌ها و حالت خالی راهنمادار
+// داشبوردهای مدیریتی — مطابق سامانهٔ گزارش‌گیری read_mysql
+// • توصیفی: ۸ کارت KPI + ۱۴ نمودار با تفسیر خودکار + جدول سهمیه‌ها + خروجی CSV هر نمودار
+// • تحلیلی / تفسیری / کشف خطا / پیشنهادی: از موتور تحلیل
+// • هر بخش جداگانه رنگ می‌گیرد — صفحه هرگز روی همهٔ داده‌ها قفل نمی‌شود
 import * as React from "react";
-import { PageHeader, SectionCard, LoadingView, DataTable, DotBadge } from "@/components/shared";
+import { PageHeader, SectionCard, DataTable, DotBadge } from "@/components/shared";
 import { BarChartX, DonutChart, GaugeChart, AreaChartX, CHART_COLORS } from "@/components/charts";
 import { JalaliDatePicker } from "@/components/ui/jalali-date-picker";
 import { faNum, faMoney, jDateTime, jDate } from "@/lib/jalali";
 import { api, useQuery, navigate } from "@/lib/client";
 import {
-  BarChart3, TrendingUp, Siren, Target, FileText, LineChart, Lightbulb, Sparkles,
+  BarChart3, FileText, LineChart, Lightbulb, Sparkles, TrendingUp,
   Building2, CalendarClock, UserRoundCheck, CalendarCheck, ShieldCheck, Scale, Clock,
   MessageSquareText, CalendarX, Users, TrendingDown, HeartHandshake, CheckCircle2,
   AlertTriangle, Activity, RefreshCw, Printer, ShieldAlert, Database, FilterX, Repeat2,
-  Percent, Wallet, Hourglass, Ban, Info, ArrowLeftRight,
+  Percent, Wallet, Hourglass, Ban, Info, ArrowLeftRight, Download, Loader2,
+  CalendarCheck as CalendarCheckIcon, CheckCircle2 as CheckCircleIcon, Siren,
+  UserRoundCheck as UserRoundCheckIcon,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,15 +25,21 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
-// ---------------- انواع ----------------
-type BiData = {
-  provinceStats: { name: string; value: number }[];
-  serviceStats: { name: string; value: number }[];
-  centerStats: { name: string; province: string; sessions: number; income: number; consultantFee: number }[];
-  statusDist: { name: string; value: number }[];
-  genderDist: { name: string; value: number }[];
-  emsSev: { name: string; value: number }[];
-  budgetStats: { title: string; amount: number; used: number; reserved: number; pct: number; provinces: { title: string; amount: number; used: number; pct: number }[] }[];
+// ---------------- انواع — داشبورد توصیفی (مطابق bi-build.ts) ----------------
+type BiChart =
+  | { kind: "donut"; id: string; title: string; labels: string[]; values: number[]; total: number; insight?: string }
+  | { kind: "bars"; id: string; title: string; labels: string[]; values: number[]; valueLabel?: string; insight?: string }
+  | { kind: "bars2"; id: string; title: string; labels: string[]; values: number[]; values2: number[]; labelOk: string; labelWait: string; insight?: string }
+  | { kind: "line"; id: string; title: string; labels: string[]; series: { name: string; values: number[]; color?: string }[]; insight?: string };
+
+type BiKpi = { key: string; label: string; value: string; sub: string | null; icon: string; tone: string };
+type BiPayload = {
+  generatedAt: string;
+  cached?: boolean;
+  filters: { provinceId: number | null; from: string | null; to: string | null };
+  kpis: BiKpi[];
+  charts: BiChart[];
+  budgetTable: { headers: string[]; rows: string[][] };
 };
 
 type CoverageData = {
@@ -78,53 +88,100 @@ const TONE_STYLES: Record<string, string> = {
   info: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900",
 };
 
+// آیکون‌های KPI توصیفی — مطابق bi-build.ts
+const KPI_ICONS: Record<string, React.ReactNode> = {
+  CalendarCheck: <CalendarCheckIcon className="h-5 w-5" />,
+  CheckCircle2: <CheckCircleIcon className="h-5 w-5" />,
+  Clock: <Clock className="h-5 w-5" />,
+  Siren: <Siren className="h-5 w-5" />,
+  Users: <Users className="h-5 w-5" />,
+  UserRoundCheck: <UserRoundCheckIcon className="h-5 w-5" />,
+  Wallet: <Wallet className="h-5 w-5" />,
+  CalendarClock: <CalendarClock className="h-5 w-5" />,
+};
+
+const KPI_TONES: Record<string, string> = {
+  p: "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300",
+  g: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300",
+  o: "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300",
+  r: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300",
+  b: "bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300",
+};
+
+// ---------------- خروجی CSV سمت کلاینت ----------------
+function csvEsc(v: unknown): string {
+  const s = String(v ?? "");
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function downloadCsv(filename: string, lines: string[]) {
+  const csv = "\uFEFF" + lines.join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function chartToCsv(ch: BiChart): string[] {
+  const lines: string[] = [];
+  if (ch.kind === "donut" || ch.kind === "bars") {
+    lines.push("عنوان,تعداد");
+    ch.labels.forEach((lb, i) => lines.push(`${csvEsc(lb)},${ch.values[i]}`));
+  } else if (ch.kind === "bars2") {
+    lines.push("عنوان,تاییدشده,در انتظار");
+    ch.labels.forEach((lb, i) => lines.push(`${csvEsc(lb)},${ch.values[i]},${ch.values2[i]}`));
+  } else {
+    lines.push(`ماه,${ch.series.map((s) => s.name).join(",")}`);
+    ch.labels.forEach((lb, i) => lines.push(`${csvEsc(lb)},${ch.series.map((s) => s.values[i]).join(",")}`));
+  }
+  return lines;
+}
+
 // ============================================================
 export function BiView() {
   // فیلترها — اعمال با دکمه تا محاسبات سنگین هر بار اجرا نشود
   const [fromIso, setFromIso] = React.useState("");
   const [toIso, setToIso] = React.useState("");
-  const [centerId, setCenterId] = React.useState("");
-  const [applied, setApplied] = React.useState({ from: "", to: "", centerId: "" });
+  const [provinceId, setProvinceId] = React.useState("");
+  const [applied, setApplied] = React.useState({ from: "", to: "", provinceId: "" });
 
   const meta = useQuery<any>(() => api("/api/meta"), []);
   const coverage = useQuery<CoverageData>(() => api("/api/bi/coverage"), []);
-  const bi = useQuery<BiData>(() => api("/api/bi"), []);
-  const ins = useQuery<InsightsData>(
-    () => api(`/api/bi/insights?${new URLSearchParams({ ...(applied.from && { from: applied.from }), ...(applied.to && { to: applied.to }), ...(applied.centerId && { centerId: applied.centerId }) }).toString()}`),
-    [applied.from, applied.to, applied.centerId]
-  );
+  const biParams = new URLSearchParams({
+    ...(applied.from && { from: applied.from }),
+    ...(applied.to && { to: applied.to }),
+    ...(applied.provinceId && { provinceId: applied.provinceId }),
+  }).toString();
+  const bi = useQuery<BiPayload>(() => api(`/api/bi?${biParams}`), [applied.from, applied.to, applied.provinceId]);
+  const insParams = new URLSearchParams({
+    ...(applied.from && { from: applied.from }),
+    ...(applied.to && { to: applied.to }),
+  }).toString();
+  const ins = useQuery<InsightsData>(() => api(`/api/bi/insights?${insParams}`), [applied.from, applied.to]);
 
-  const activeFilterCount = [applied.from, applied.to, applied.centerId].filter(Boolean).length;
+  const activeFilterCount = [applied.from, applied.to, applied.provinceId].filter(Boolean).length;
   const eventsCoverage = coverage.data?.sources.find((s) => s.key === "events");
   const hasAnyData = (coverage.data?.sources ?? []).some((s) => s.count > 0);
   const hasEvents = (eventsCoverage?.count ?? 0) > 0;
 
-  const applyFilters = () => setApplied({ from: fromIso, to: toIso, centerId });
-  const resetFilters = () => { setFromIso(""); setToIso(""); setCenterId(""); setApplied({ from: "", to: "", centerId: "" }); };
+  const applyFilters = () => setApplied({ from: fromIso, to: toIso, provinceId });
+  const resetFilters = () => { setFromIso(""); setToIso(""); setProvinceId(""); setApplied({ from: "", to: "", provinceId: "" }); };
 
-  if (bi.loading || ins.loading || coverage.loading) return <LoadingView label="در حال محاسبهٔ داشبوردهای مدیریتی..." />;
-  if (!bi.data && !ins.data)
-    return (
-      <div className="p-10 text-center">
-        <p className="text-sm text-rose-500">{bi.error ?? ins.error ?? "خطا در بارگذاری داده‌ها"}</p>
-        <Button variant="outline" size="sm" className="mt-3 gap-1.5" onClick={() => { bi.refetch(); ins.refetch(); coverage.refetch(); }}>
-          <RefreshCw className="h-3.5 w-3.5" /> تلاش دوباره
-        </Button>
-      </div>
-    );
+  const refreshAll = () => { bi.refetch(); ins.refetch(); coverage.refetch(); };
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="داشبوردهای مدیریتی"
-        subtitle={`توصیفی، تحلیلی، تفسیری، کشف خطا و پیشنهادی — آخرین محاسبه: ${ins.data ? jDateTime(ins.data.generatedAt) : "—"}`}
+        subtitle={`توصیفی، تحلیلی، تفسیری، کشف خطا و پیشنهادی — آخرین محاسبه: ${bi.data ? jDateTime(bi.data.generatedAt) : "…"}`}
         icon={<BarChart3 className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2 no-print">
+            {bi.data?.cached && <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">نسخهٔ کش‌شده</span>}
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.print()}>
               <Printer className="h-3.5 w-3.5" /> چاپ / PDF
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { bi.refetch(); ins.refetch(); coverage.refetch(); }}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={refreshAll}>
               <RefreshCw className="h-3.5 w-3.5" /> به‌روزرسانی
             </Button>
           </div>
@@ -162,7 +219,7 @@ export function BiView() {
         </div>
       )}
 
-      {/* نوار فیلتر — تاریخ شمسی و مرکز */}
+      {/* نوار فیلتر — تاریخ شمسی و استان */}
       <SectionCard bodyClass="p-4 no-print">
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
@@ -174,12 +231,12 @@ export function BiView() {
             <JalaliDatePicker value={toIso} onChange={setToIso} placeholder="انتهای بازه" className="w-[180px]" />
           </div>
           <div className="w-[210px] space-y-1">
-            <p className="text-[11px] font-bold text-muted-foreground">مرکز</p>
-            <Select value={centerId || "all"} onValueChange={(v) => setCenterId(v === "all" ? "" : v)}>
-              <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="همهٔ مراکز" /></SelectTrigger>
+            <p className="text-[11px] font-bold text-muted-foreground">استان</p>
+            <Select value={provinceId || "all"} onValueChange={(v) => setProvinceId(v === "all" ? "" : v)}>
+              <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="همهٔ استان‌ها" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">همهٔ مراکز</SelectItem>
-                {(meta.data?.centers ?? []).map((c: any) => <SelectItem key={c.id} value={String(c.id)}>{c.title}</SelectItem>)}
+                <SelectItem value="all">همهٔ استان‌ها</SelectItem>
+                {(meta.data?.provinces ?? []).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{p.title}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -191,23 +248,31 @@ export function BiView() {
           )}
           {ins.data?.window && (
             <span className="mr-auto text-[10.5px] text-muted-foreground">
-              بازهٔ محاسبه: {jDate(ins.data.window.from)} تا {jDate(ins.data.window.to)}
+              بازهٔ تحلیل: {ins.data.window.from ? jDate(ins.data.window.from) : "—"} تا {ins.data.window.to ? jDate(ins.data.window.to) : "—"}
             </span>
           )}
         </div>
       </SectionCard>
 
-      {/* نوار KPI سراسری */}
-      {ins.data && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6 no-print">
-          <Kpi title="جلسات بازهٔ انتخابی" value={faNum(ins.data.kpis.events365)} icon={<CalendarCheck className="h-4 w-4" />} />
-          <Kpi title="تایید نهایی" value={faNum(ins.data.kpis.confirmed365)} icon={<CheckCircle2 className="h-4 w-4" />} tone="emerald" />
-          <Kpi title="در انتظار تایید" value={faNum(ins.data.kpis.pending)} icon={<Hourglass className="h-4 w-4" />} tone="amber" />
-          <Kpi title="درآمد ثبت‌شده" value={faMoney(ins.data.kpis.income365) + " ریال"} icon={<Wallet className="h-4 w-4" />} tone="rose" />
-          <Kpi title="مشاوران فعال" value={faNum(ins.data.kpis.consultants)} icon={<UserRoundCheck className="h-4 w-4" />} tone="violet" />
-          <Kpi title="سلامت داده" value={`${faNum(ins.data.quality.score)}٪`} icon={<ShieldCheck className="h-4 w-4" />} tone={ins.data.quality.score >= 80 ? "emerald" : ins.data.quality.score >= 50 ? "amber" : "rose"} />
+      {/* نوار KPI توصیفی — ۸ کارت مطابق read_mysql */}
+      {bi.loading && !bi.data ? (
+        <KpiSkeleton />
+      ) : bi.data ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-4">
+          {bi.data.kpis.map((kpi) => (
+            <div key={kpi.key} className="rounded-2xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
+              <div className="flex items-center justify-between">
+                <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${KPI_TONES[kpi.tone] ?? KPI_TONES.p}`}>
+                  {KPI_ICONS[kpi.icon] ?? <Activity className="h-5 w-5" />}
+                </span>
+                <p className="text-xl font-black tabular-nums">{kpi.value}</p>
+              </div>
+              <p className="mt-2.5 text-xs font-bold">{kpi.label}</p>
+              {kpi.sub && <p className="mt-0.5 text-[10px] text-muted-foreground">{kpi.sub}</p>}
+            </div>
+          ))}
         </div>
-      )}
+      ) : null}
 
       <Tabs defaultValue="descriptive" dir="rtl">
         <TabsList className="h-auto flex-wrap no-print">
@@ -219,117 +284,176 @@ export function BiView() {
         </TabsList>
 
         <TabsContent value="descriptive" className="mt-4 space-y-4">
-          {bi.data ? <DescriptiveTab data={bi.data} coverage={coverage.data} consultants={ins.data?.kpis.consultants ?? 0} /> : <p className="p-6 text-center text-xs text-muted-foreground">دادهٔ توصیفی در دسترس نیست</p>}
+          {bi.loading && !bi.data ? (
+            <ChartSkeleton />
+          ) : bi.data ? (
+            <DescriptiveTab data={bi.data} />
+          ) : (
+            <p className="p-6 text-center text-xs text-muted-foreground">{bi.error ?? "دادهٔ توصیفی در دسترس نیست"}</p>
+          )}
         </TabsContent>
         <TabsContent value="analytic" className="mt-4 space-y-4">
-          {ins.data ? <AnalyticTab data={ins.data} /> : null}
+          {ins.loading && !ins.data ? <ChartSkeleton /> : ins.data ? <AnalyticTab data={ins.data} /> : null}
         </TabsContent>
         <TabsContent value="interpret" className="mt-4">
-          {ins.data ? <InterpretTab data={ins.data} /> : null}
+          {ins.loading && !ins.data ? <ChartSkeleton /> : ins.data ? <InterpretTab data={ins.data} /> : null}
         </TabsContent>
         <TabsContent value="anomaly" className="mt-4 space-y-4">
-          {ins.data ? <AnomalyTab data={ins.data} /> : null}
+          {ins.loading && !ins.data ? <ChartSkeleton /> : ins.data ? <AnomalyTab data={ins.data} /> : null}
         </TabsContent>
         <TabsContent value="advice" className="mt-4">
-          {ins.data ? <AdviceTab data={ins.data} /> : null}
+          {ins.loading && !ins.data ? <ChartSkeleton /> : ins.data ? <AdviceTab data={ins.data} /> : null}
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-// ---------------- تب توصیفی ----------------
-function DescriptiveTab({ data, coverage, consultants }: { data: BiData; coverage: CoverageData | null; consultants: number }) {
-  const topCenter = data.centerStats[0];
-  const c = (k: string) => coverage?.sources.find((s) => s.key === k)?.count ?? 0;
-  const confirmed = data.statusDist.find((s) => s.name === "تایید نهایی")?.value ?? 0;
+// ---------------- اسکلت بارگذاری ----------------
+function KpiSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-4">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3 rounded-2xl border bg-card p-4">
+          <div className="h-10 w-10 animate-pulse rounded-xl bg-muted" />
+          <div className="flex-1 space-y-2">
+            <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
+            <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
+function ChartSkeleton() {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="rounded-2xl border bg-card p-5">
+          <div className="mb-4 h-4 w-1/3 animate-pulse rounded bg-muted" />
+          <div className="h-56 animate-pulse rounded-xl bg-muted/60" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type BudgetRow = { id: number; cells: string[] };
+
+// ---------------- تب توصیفی — شبکهٔ نمودارها مطابق read_mysql ----------------
+function DescriptiveTab({ data }: { data: BiPayload }) {
   return (
     <>
-      {/* کارت‌های آماری بزرگ — الگوی سامانهٔ قدیمی */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatTile label="کل جلسات سامانه" value={faNum(data.statusDist.reduce((s, x) => s + x.value, 0))} icon={<CalendarCheck className="h-5 w-5" />} tone="rose" sub={`${faNum(confirmed)} تایید نهایی`} />
-        <StatTile label="کاربران" value={faNum(c("users"))} icon={<Users className="h-5 w-5" />} tone="violet" sub="مشتری، مشاور و کارمند" />
-        <StatTile label="مشاوران فعال" value={faNum(consultants)} icon={<UserRoundCheck className="h-5 w-5" />} tone="emerald" sub="با نقش مشاور/روان‌پزشک" />
-        <StatTile label="مراکز" value={faNum(c("centers"))} icon={<Building2 className="h-5 w-5" />} tone="amber" sub="کلینیک و مرکز مشاوره" />
-        <StatTile label="پیامک‌ها" value={faNum(c("sms"))} icon={<MessageSquareText className="h-5 w-5" />} tone="sky" sub="کل تاریخچهٔ ارسال" />
-        <StatTile label="ارجاعات سها" value={faNum(c("referrals"))} icon={<ArrowLeftRight className="h-5 w-5" />} tone="indigo" sub="از وب‌سرویس سها" />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <SectionCard title="توزیع جغرافیایی" subtitle="جلسات تاییدشده به تفکیک استان" className="lg:col-span-2">
-          <BarChartX data={data.provinceStats} xKey="name" bars={[{ key: "value", name: "جلسات" }]} height={340} layout="vertical" />
-        </SectionCard>
-        <SectionCard title="ترکیب جنسیتی کاربران" subtitle="کل سامانه">
-          <DonutChart data={data.genderDist} height={340} />
-        </SectionCard>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <SectionCard title="توزیع نوع خدمت" subtitle="خدمات پرتقاضا بر اساس جلسات تاییدشده">
-          <BarChartX data={data.serviceStats} xKey="name" bars={[{ key: "value", name: "جلسات" }]} height={360} />
-        </SectionCard>
-        <SectionCard title="مراکز پرکار" subtitle="بر اساس تعداد جلسات تاییدشده">
-          <BarChartX data={data.centerStats.map((x) => ({ name: x.name, value: x.sessions }))} xKey="name" bars={[{ key: "value", name: "جلسات" }]} height={360} layout="vertical" />
-        </SectionCard>
-      </div>
-
-      {data.statusDist.length > 0 && (
-        <SectionCard title="توزیع وضعیت جلسات" subtitle="سهم هر وضعیت در کل جلسات سامانه">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <DonutChart data={data.statusDist} height={300} />
-            <div className="grid grid-cols-2 content-start gap-2">
-              {data.statusDist.map((s) => (
-                <div key={s.name} className="flex items-center justify-between rounded-xl border bg-muted/40 px-3 py-2.5">
-                  <span className="truncate text-[11px]">{s.name}</span>
-                  <span className="text-xs font-extrabold tabular-nums">{faNum(s.value)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </SectionCard>
-      )}
-
-      {topCenter && (
-        <SectionCard title="نشانهٔ مرکز برتر" subtitle={topCenter.name}>
-          <div className="grid gap-3 sm:grid-cols-4">
-            <MiniStat label="جلسات تاییدشده" value={faNum(topCenter.sessions)} />
-            <MiniStat label="درآمد کل (ریال)" value={faMoney(topCenter.income)} />
-            <MiniStat label="حق‌الزحمه مشاوران" value={faMoney(topCenter.consultantFee)} />
-            <MiniStat label="استان" value={topCenter.province || "—"} />
-          </div>
-        </SectionCard>
-      )}
-
-      {data.budgetStats.length > 0 && (
-        <div className="space-y-4">
-          {data.budgetStats.map((b) => (
-            <SectionCard key={b.title} title={b.title} subtitle={`سقف: ${faNum(b.amount)} — مصرف: ${faNum(b.used)} — رزرو: ${faNum(b.reserved)}`}>
-              <Progress value={b.pct} className="h-2.5" />
-              <div className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
-                {b.provinces.map((p) => (
-                  <div key={p.title} className="rounded-lg border bg-muted/40 p-2.5">
-                    <div className="flex items-center justify-between text-[11px] font-bold">
-                      <span className="truncate">{p.title}</span>
-                      <span className="tabular-nums">{faNum(p.pct)}٪</span>
-                    </div>
-                    <Progress value={p.pct} className="mt-1.5 h-1" />
-                  </div>
-                ))}
-              </div>
-            </SectionCard>
-          ))}
-        </div>
-      )}
-
-      {data.statusDist.reduce((s, x) => s + x.value, 0) === 0 && (
+      {data.charts.length === 0 && (
         <div className="rounded-2xl border bg-muted/40 p-8 text-center text-sm text-muted-foreground">
-          با فیلترهای فعلی جلسه‌ای برای نمایش نیست — اگر انتقال داده اجرا نشده، از پوشش داده‌ها در بالای صفحه راهنما بگیرید.
+          با فیلترهای فعلی داده‌ای برای نمایش نیست — اگر انتقال داده اجرا نشده، از پوشش داده‌ها در بالای صفحه راهنما بگیرید.
         </div>
+      )}
+      <div className="grid gap-4 xl:grid-cols-2">
+        {data.charts.map((ch) => <ChartCard key={ch.id} chart={ch} />)}
+      </div>
+
+      {/* جدول سهمیه‌ها */}
+      {data.budgetTable.rows.length > 0 && (
+        <SectionCard title="سهمیه‌های خدمات (بودجه)" subtitle="سقف، مصرف و درصد مصرف هر سهمیه" bodyClass="p-0">
+          <DataTable
+            columns={data.budgetTable.headers.map((h, i) => ({
+              header: h,
+              cell: (row: BudgetRow) => <span className="text-xs tabular-nums">{row.cells[i]}</span>,
+            }))}
+            rows={data.budgetTable.rows.map((cells, id) => ({ id, cells }))}
+          />
+        </SectionCard>
       )}
     </>
   );
 }
+
+// ---------------- کارت نمودار — با تفسیر خودکار و CSV ----------------
+function ChartCard({ chart }: { chart: BiChart }) {
+  const [showInsight, setShowInsight] = React.useState(true);
+  const sub =
+    chart.kind === "donut" ? `مجموع: ${faNum(chart.total)}` :
+    chart.kind === "line" ? `${faNum(chart.labels.length)} ماه` :
+    chart.kind === "bars2" ? `${chart.labelOk} / ${chart.labelWait}` : undefined;
+
+  const exportCsv = () => downloadCsv(`chart-${chart.id}.csv`, chartToCsv(chart));
+
+  return (
+    <SectionCard
+      title={chart.title}
+      subtitle={sub}
+      actions={
+        <div className="flex items-center gap-1">
+          {chart.insight && (
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowInsight((v) => !v)} aria-label="تفسیر" title="تفسیر خودکار">
+              <Info className={`h-3.5 w-3.5 ${showInsight ? "text-primary" : "text-muted-foreground"}`} />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={exportCsv} aria-label="خروجی CSV" title="خروجی CSV">
+            <Download className="h-3.5 w-3.5 text-muted-foreground" />
+          </Button>
+        </div>
+      }
+    >
+      <ChartBody chart={chart} />
+      {chart.insight && showInsight && (
+        <p className="mt-3 rounded-xl border border-dashed bg-muted/30 px-3.5 py-2.5 text-[11.5px] leading-6 text-foreground/80">
+          <Lightbulb className="mb-0.5 ml-1 inline h-3.5 w-3.5 text-amber-500" />
+          {chart.insight}
+        </p>
+      )}
+    </SectionCard>
+  );
+}
+
+// ---------------- بدنهٔ نمودار بر اساس نوع ----------------
+function ChartBody({ chart }: { chart: BiChart }) {
+  if (chart.kind === "donut") {
+    const data = chart.labels.map((name, i) => ({ name, value: chart.values[i] }));
+    return (
+      <div className="grid gap-2 lg:grid-cols-[1fr_auto]">
+        <DonutChart data={data} height={280} />
+        <div className="grid max-h-[280px] grid-cols-1 content-start gap-1.5 overflow-y-auto pl-1 lg:w-44">
+          {data.map((d, i) => (
+            <div key={d.name} className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 px-2.5 py-1.5">
+              <span className="flex items-center gap-1.5 truncate text-[10.5px]">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: CHART_COLOR(i) }} />
+                {d.name}
+              </span>
+              <span className="text-[11px] font-extrabold tabular-nums">{faNum(d.value)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (chart.kind === "bars") {
+    const data = chart.labels.map((name, i) => ({ name, value: chart.values[i] }));
+    return <BarChartX data={data} xKey="name" bars={[{ key: "value", name: chart.valueLabel ?? "تعداد" }]} height={Math.min(460, 160 + data.length * 22)} layout="vertical" />;
+  }
+  if (chart.kind === "bars2") {
+    const data = chart.labels.map((name, i) => ({ name, ok: chart.values[i], wait: chart.values2[i] }));
+    return (
+      <BarChartX
+        data={data} xKey="name" stacked height={300}
+        bars={[{ key: "ok", name: chart.labelOk, color: "#16a34a" }, { key: "wait", name: chart.labelWait, color: "#c99a5b" }]}
+      />
+    );
+  }
+  // line — سری‌های چندگانه
+  const data = chart.labels.map((label, i) => {
+    const row: Record<string, string | number> = { label };
+    chart.series.forEach((s, si) => { row[`s${si}`] = s.values[i]; });
+    return row;
+  });
+  const areas = chart.series.map((s, si) => ({ key: `s${si}`, name: s.name, color: s.color }));
+  return <AreaChartX data={data} xKey="label" areas={areas} height={300} />;
+}
+
+// رنگ نمودار از پالت
+const CHART_COLOR = (i: number) => CHART_COLORS[i % CHART_COLORS.length];
 
 // ---------------- تب تحلیلی ----------------
 function AnalyticTab({ data }: { data: InsightsData }) {
@@ -344,7 +468,7 @@ function AnalyticTab({ data }: { data: InsightsData }) {
 
   return (
     <>
-      {/* کارت‌های نرخ — الگوی داشبورد تحلیلی سامانهٔ قدیمی */}
+      {/* کارت‌های نرخ */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <RateTile label="نرخ تکمیل جلسات" value={completion} icon={<CheckCircle2 className="h-4 w-4" />} />
         <RateTile label="نرخ رد شدن" value={rejection} icon={<Ban className="h-4 w-4" />} invert />
@@ -492,10 +616,9 @@ function InterpretTab({ data }: { data: InsightsData }) {
 
       <SectionCard title="خلاصهٔ اجرایی" subtitle="جمع‌بندی خودکار وضعیت مرکز">
         <p className="text-[13.5px] leading-8 text-foreground/90">
-          {data.insights
-            .filter((i) => ["trend", "service-share", "repeat", "quality"].includes(i.id))
-            .map((i) => i.text)
-            .join(" ")}
+          {data.insights.length
+            ? data.insights.map((i) => i.text).join(" ")
+            : "بر اساس دادهٔ بازهٔ انتخابی، نکتهٔ اجرایی خاصی یافت نشد."}
         </p>
       </SectionCard>
 
@@ -639,29 +762,6 @@ function AdviceTab({ data }: { data: InsightsData }) {
 }
 
 // ---------------- اجزای کوچک ----------------
-const TILE_TONES: Record<string, string> = {
-  rose: "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300",
-  emerald: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300",
-  amber: "bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300",
-  violet: "bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300",
-  sky: "bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300",
-  indigo: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300",
-};
-
-function StatTile({ label, value, icon, tone = "rose", sub, hidden }: { label: string; value: string; icon: React.ReactNode; tone?: string; sub?: string; hidden?: boolean }) {
-  if (hidden) return null;
-  return (
-    <div className="rounded-2xl border bg-card p-4 shadow-sm transition-shadow hover:shadow-md">
-      <div className="flex items-center justify-between">
-        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${TILE_TONES[tone] ?? TILE_TONES.rose}`}>{icon}</span>
-        <p className="text-2xl font-black tabular-nums">{value}</p>
-      </div>
-      <p className="mt-2.5 text-xs font-bold">{label}</p>
-      {sub && <p className="mt-0.5 text-[10px] text-muted-foreground">{sub}</p>}
-    </div>
-  );
-}
-
 function RateTile({ label, value, icon, invert }: { label: string; value: number; icon: React.ReactNode; invert?: boolean }) {
   const ok = invert ? value <= 10 : value >= 50;
   return (
@@ -669,18 +769,6 @@ function RateTile({ label, value, icon, invert }: { label: string; value: number
       <div className="flex items-center gap-2 text-muted-foreground">{icon}<p className="text-[11px]">{label}</p></div>
       <p className={`mt-2 text-2xl font-black tabular-nums ${ok ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>{faNum(value)}٪</p>
       <Progress value={Math.min(value, 100)} className="mt-2 h-1" />
-    </div>
-  );
-}
-
-function Kpi({ title, value, icon, tone = "rose" }: { title: string; value: string; icon: React.ReactNode; tone?: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border bg-card p-4 shadow-sm">
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${TILE_TONES[tone] ?? TILE_TONES.rose}`}>{icon}</span>
-      <div className="min-w-0">
-        <p className="truncate text-[11px] text-muted-foreground">{title}</p>
-        <p className="text-sm font-extrabold tabular-nums">{value}</p>
-      </div>
     </div>
   );
 }
@@ -697,15 +785,6 @@ function TrendRow({ label, value, ref: refValue, pct }: { label: string; value: 
       <p className="mt-1 text-sm font-extrabold tabular-nums">
         {faNum(value)} <span className="text-[10px] font-normal text-muted-foreground">در برابر {faNum(refValue)}</span>
       </p>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-xl border bg-muted/40 px-4 py-3">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-sm font-extrabold tabular-nums">{value}</span>
     </div>
   );
 }

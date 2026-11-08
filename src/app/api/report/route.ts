@@ -1,14 +1,18 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, ok, fail } from "@/lib/server";
 import { monthLabel } from "@/lib/jalali";
 import { normalizeDateInput } from "@/lib/jdate";
+import { rawRows, sqlLocalDate, num } from "@/lib/analytics";
+import { buildXlsx } from "@/lib/xlsx";
 
 // =====================================================================
-// گزارش‌ساز حرفه‌ای — موتور گزارش‌گیری عمومی
-// همهٔ ستون‌ها/فیلترها/گروه‌بندی‌ها از وایت‌لیست می‌آیند (بدون SQL خام
-// و بدون ورودی دلخواه کاربر در کوئری) — امن در برابر تزریق.
-// دو حالت: «جزئیات» (صفحه‌بندی‌شده) و «خلاصه» (گروه‌بندی + تجمیع)
+// گزارش‌ساز حرفه‌ای — موتور گزارش‌گیری عمومی (مطابق read_mysql/repengine.py)
+// • دوازده منبع داده: جلسات، مالی، کاربران، رزروها، ارجاعات، پیامک‌ها،
+//   موارد حاد، جلسات گروهی، لاگ فعالیت، مالیات مشاوران، سهمیه‌ها، درخواست‌های رزرو
+// • حالت «جزئیات» صفحه‌بندی‌شده + حالت «خلاصه» با GROUP BY داخل دیتابیس
+// • خروجی CSV (سازگار با اکسل فارسی) و اکسل XLSX راست‌به‌چپ
+// • همهٔ ستون‌ها/فیلترها از وایت‌لیست می‌آیند — امن در برابر تزریق
 // =====================================================================
 
 type SortDir = "asc" | "desc";
@@ -25,23 +29,24 @@ type ReportBody = {
     from?: string;
     to?: string;
     blocked?: string;
+    severity?: string;
   };
   groupBy?: string;
   metric?: string;
   sort?: { key?: string; dir?: SortDir };
   page?: number;
   pageSize?: number;
+  format?: "json" | "csv" | "xlsx";
 };
 
-const SUMMARY_CAP = 20000; // سقف ردیف برای حالت خلاصه
-const MONTHLY_CAP = 50000;
+const SUMMARY_CAP = 50000; // سقف ردیف برای حالت جزئیاتِ خروجی فایل
 
-function num(v: unknown): number | null {
+function num2(v: unknown): number | null {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 function dateFrom(v?: string): Date | null {
-  const iso = normalizeDateInput(v); // پذیرش همزمان تاریخ شمسی (۱۴۰۴/۰۸/۱۶) و میلادی
+  const iso = normalizeDateInput(v);
   if (!iso) return null;
   const d = new Date(iso + "T00:00:00.000");
   return isNaN(d.getTime()) ? null : d;
@@ -52,6 +57,9 @@ function dateTo(v?: string): Date | null {
   const d = new Date(iso + "T23:59:59.999");
   return isNaN(d.getTime()) ? null : d;
 }
+
+const faBool = (v: boolean | null | undefined) => (v === null || v === undefined ? "—" : v ? "بله" : "خیر");
+void faBool;
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser(req);
@@ -66,14 +74,14 @@ export async function POST(req: NextRequest) {
 
   const dataset = String(body.dataset ?? "events");
   const mode = body.mode === "summary" ? "summary" : "detail";
+  const format = body.format === "csv" ? "csv" : body.format === "xlsx" ? "xlsx" : "json";
   const filters = body.filters ?? {};
   const sortDir: SortDir = body.sort?.dir === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number(body.page ?? 1));
   const pageSize = Math.min(100, Math.max(5, Number(body.pageSize ?? 20)));
 
-  // فیلترهای مشترک قابل اعتبارسنجی
-  const serviceId = num(filters.serviceId);
-  const centerId = num(filters.centerId);
+  const serviceId = num2(filters.serviceId);
+  const centerId = num2(filters.centerId);
   const fromDate = dateFrom(filters.from);
   const toDate = dateTo(filters.to);
   const q = String(filters.q ?? "").trim();
@@ -81,17 +89,29 @@ export async function POST(req: NextRequest) {
   try {
     switch (dataset) {
       case "events":
-        return await reportEvents({ mode, body, filters, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize });
+        return await reportEvents({ mode, body, filters, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
       case "finance":
-        return await reportFinance({ mode, body, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize });
+        return await reportFinance({ mode, body, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
       case "users":
-        return await reportUsers({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize });
+        return await reportUsers({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "reserves":
-        return await reportReserves({ mode, body, q, fromDate, toDate, sortDir, page, pageSize });
+        return await reportReserves({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "referrals":
-        return await reportReferrals({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize });
+        return await reportReferrals({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "sms":
-        return await reportSms({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize });
+        return await reportSms({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
+      case "ems":
+        return await reportEms({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
+      case "group-events":
+        return await reportGroupEvents({ mode, body, filters, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
+      case "logs":
+        return await reportLogs({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
+      case "taxes":
+        return await reportTaxes({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
+      case "budgets":
+        return await reportBudgets({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
+      case "reserve-requests":
+        return await reportReserveRequests({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       default:
         return fail("DATASET_UNKNOWN");
     }
@@ -101,66 +121,277 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// ------------------------------------------------------------ جلسات
+// ------------------------------------------------------------ ساختار پاسخ
 type Ctx = {
   mode: "detail" | "summary";
   body: ReportBody;
-  filters: any;
+  filters?: any;
   q: string;
-  serviceId: number | null;
-  centerId: number | null;
+  serviceId?: number | null;
+  centerId?: number | null;
   fromDate: Date | null;
   toDate: Date | null;
   sortDir: SortDir;
   page: number;
   pageSize: number;
+  format: "json" | "csv" | "xlsx";
 };
 
-const EVENT_COLUMNS: Record<string, { label: string }> = {
+type ColDef = { label: string; type?: "date" | "money" | "bool" | "num" };
+
+/** پاسخ جزئیات — در حالت فایل، همهٔ ردیف‌ها بدون صفحه‌بندی تا سقف EXPORT */
+async function detailResponse(ctx: Ctx, columns: Record<string, ColDef>, allRows: () => Promise<Record<string, unknown>[]>, pageCounted: () => Promise<{ rows: Record<string, unknown>[]; total: number }>, filename: string, defaultSortKey: string) {
+  if (ctx.format === "json") {
+    const { rows, total } = await pageCounted();
+    return ok({ columns, rows, total, page: ctx.page, pageSize: ctx.pageSize, groupKeys: null, metrics: null });
+  }
+  // خروجی فایل — تا ۵۰ هزار ردیف
+  const rows = (await allRows()).slice(0, SUMMARY_CAP);
+  return fileResponse(ctx, columns, rows, filename, defaultSortKey);
+}
+
+/** ساخت CSV/XLSX از ردیف‌های نگاشت‌شده — کلید ستون = body.columns یا همهٔ ستون‌ها */
+function fileResponse(ctx: Ctx, columns: Record<string, ColDef>, rows: Record<string, unknown>[], filename: string, defaultSortKey: string): NextResponse {
+  const wanted = (ctx.body.columns && ctx.body.columns.length ? ctx.body.columns : Object.keys(columns)).filter((c) => columns[c]);
+  const header = wanted.map((c) => columns[c].label);
+  const cellText = (v: unknown, type?: string): string => {
+    if (v === null || v === undefined) return "—";
+    if (type === "bool") return v ? "بله" : "خیر";
+    if (type === "date") {
+      const d = v instanceof Date ? v : new Date(String(v));
+      return isNaN(d.getTime()) ? String(v) : monthLabel(d);
+    }
+    return String(v);
+  };
+  if (ctx.format === "csv") {
+    const esc = (s: string) => (/[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    const lines = [header.map(esc).join(",")];
+    for (const r of rows) lines.push(wanted.map((c) => esc(cellText(r[c], columns[c].type))).join(","));
+    return new NextResponse("\uFEFF" + lines.join("\r\n"), {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}.csv"`,
+      },
+    });
+  }
+  // xlsx — ستون‌های عددی به‌صورت عدد تا در اکسل جمع‌پذیر باشند
+  const sheet: { v: string | number | null; type?: "s" | "n" }[][] = [header.map((h) => ({ v: h }))];
+  for (const r of rows) {
+    sheet.push(wanted.map((c) => {
+      const v = r[c];
+      const t = columns[c].type;
+      if (v === null || v === undefined) return { v: null };
+      if (t === "money" || t === "num") return { v: num(v), type: "n" };
+      if (t === "bool") return { v: v ? "بله" : "خیر" };
+      if (t === "date") {
+        const d = v instanceof Date ? v : new Date(String(v));
+        return { v: isNaN(d.getTime()) ? String(v) : monthLabel(d) };
+      }
+      return { v: String(v) };
+    }));
+  }
+  const buf = buildXlsx("گزارش", sheet);
+  return new NextResponse(new Uint8Array(buf), {
+    headers: {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="${filename}.xlsx"`,
+    },
+  });
+}
+
+// ------------------------------------------------------------ حالت خلاصه با SQL
+/**
+ * خلاصهٔ SQL: یک GROUP BY داخل دیتابیس — روی میلیون‌ها ردیف هم سریع است.
+ * groups: هر کلید یا SQLِ گروه‌بندی مستقیم است («e.status») یا «dateCol» برای ماه شمسی.
+ */
+async function summarizeSql(
+  ctx: Ctx,
+  base: { from: string; where: string; args: unknown[]; joins?: string },
+  groups: Record<string, { label: string; sql?: string; dateCol?: string }>,
+  metrics: Record<string, ColDef>,
+): Promise<Response> {
+  const gk = ctx.body.groupBy && groups[ctx.body.groupBy] ? ctx.body.groupBy : Object.keys(groups)[0];
+  const g = groups[gk];
+  const metricKey = ctx.body.metric && metrics[ctx.body.metric] ? ctx.body.metric : "count";
+  const joins = base.joins ?? "";
+  const where = base.where || "WHERE 1=1";
+  const args = base.args;
+
+  // تجمیع عمومی: هر متریک با SUM/AVG — همه در یک کوئری
+  const metricCols: Record<string, string> = {
+    count: "COUNT(*) AS m_count",
+  };
+  for (const key of Object.keys(metrics)) {
+    if (key === "count") continue;
+    const [, field] = key.split(":");
+    if (key.startsWith("sum:")) metricCols[key] = `SUM(\`${field}\`) AS m_${key.replace(":", "_")}`;
+    else if (key.startsWith("avg:")) metricCols[key] = `AVG(\`${field}\`) AS m_${key.replace(":", "_")}`;
+  }
+
+  if (g.dateCol) {
+    const dd = sqlLocalDate(g.dateCol);
+    const rows = await rawRows(
+      `SELECT ${dd} AS d, ${Object.values(metricCols).join(", ")}
+       FROM ${base.from}${joins} ${where}
+       ${where.includes("WHERE") ? "AND" : "WHERE"} ${g.dateCol} IS NOT NULL
+       GROUP BY ${dd} ORDER BY 1`,
+      args,
+    );
+    // ماه شمسی از ردیف‌های روزانه
+    const buckets = new Map<string, { label: string; count: number; agg: Record<string, number> }>();
+    for (const r of rows) {
+      const iso = String(r.d ?? "").slice(0, 10);
+      if (!iso) continue;
+      const key = monthLabel(new Date(iso + "T00:00:00.000"));
+      const cur = buckets.get(key) ?? { label: key, count: 0, agg: {} };
+      cur.count += num(r.m_count);
+      for (const key2 of Object.keys(metrics)) {
+        if (key2 === "count") continue;
+        const alias = `m_${key2.replace(":", "_")}`;
+        cur.agg[key2] = (cur.agg[key2] ?? 0) + num(r[alias]);
+      }
+      buckets.set(key, cur);
+    }
+    const result = [...buckets.entries()].map(([name, b]) => ({
+      name,
+      value: metricKey === "count" ? b.count
+        : metricKey.startsWith("sum:") ? b.agg[metricKey] ?? 0
+        : metricKey.startsWith("avg:") ? (b.count ? Math.round((b.agg[metricKey] ?? 0) / b.count) : 0)
+        : b.count,
+    }));
+    return ok({
+      columns: null, rows: result, total: result.length,
+      summary: { groupBy: { key: gk, label: g.label }, metric: { key: metricKey, label: metrics[metricKey].label }, sourceRows: result.reduce((s, r) => s + r.value, 0), capped: false },
+      groupKeys: Object.fromEntries(Object.entries(groups).map(([k, v]) => [k, { label: v.label }])),
+      metrics,
+    });
+  }
+
+  // گروه‌بندی ستونی مستقیم
+  const groupSql = g.sql ?? "";
+  const rows = await rawRows(
+    `SELECT ${groupSql} AS g, ${Object.values(metricCols).join(", ")}
+     FROM ${base.from}${joins} ${where}
+     GROUP BY ${groupSql} ORDER BY m_count DESC`,
+    args,
+  );
+  const result = rows
+    .filter((r) => r.g !== null && r.g !== undefined && String(r.g) !== "")
+    .map((r) => ({
+      name: String(r.g),
+      value: metricKey === "count" ? num(r.m_count)
+        : metricKey.startsWith("sum:") ? num(r[`m_${metricKey.replace(":", "_")}`])
+        : metricKey.startsWith("avg:") ? Math.round(num(r[`m_${metricKey.replace(":", "_")}`]))
+        : num(r.m_count),
+    }))
+    .sort((a, b) => b.value - a.value);
+  return ok({
+    columns: null, rows: result, total: result.length,
+    summary: { groupBy: { key: gk, label: g.label }, metric: { key: metricKey, label: metrics[metricKey].label }, sourceRows: result.reduce((s, r) => s + r.value, 0), capped: false },
+    groupKeys: Object.fromEntries(Object.entries(groups).map(([k, v]) => [k, { label: v.label }])),
+    metrics,
+  });
+}
+
+// ------------------------------------------------------------ شرط‌های مشترک SQL
+function eventWhere(q: string, serviceId: number | null, centerId: number | null, fromDate: Date | null, toDate: Date | null, alias = "e"): { where: string; args: unknown[] } {
+  const parts: string[] = ["1=1"];
+  const args: unknown[] = [];
+  if (serviceId !== null) { parts.push(`${alias}.\`serviceId\` = ?`); args.push(serviceId); }
+  if (centerId !== null) { parts.push(`${alias}.\`centerId\` = ?`); args.push(centerId); }
+  if (fromDate) { parts.push(`${alias}.\`startDate\` >= ?`); args.push(fromDate); }
+  if (toDate) { parts.push(`${alias}.\`startDate\` <= ?`); args.push(toDate); }
+  if (q) { parts.push(`(${alias}.\`topic\` LIKE ? OR ${alias}.\`trackingCode\` LIKE ?)`); args.push(`%${q}%`, `%${q}%`); }
+  return { where: `WHERE ${parts.join(" AND ")}`, args };
+}
+
+// ============================================================ جلسات
+const EVENT_COLUMNS: Record<string, ColDef> = {
   id: { label: "شناسه" },
   trackingCode: { label: "کد رهگیری" },
   startDate: { label: "تاریخ جلسه", type: "date" },
+  endDate: { label: "تاریخ پایان", type: "date" },
   status: { label: "وضعیت" },
   topic: { label: "موضوع" },
   userName: { label: "مراجع" },
   userNid: { label: "کد ملی مراجع" },
+  userMobile: { label: "موبایل مراجع" },
+  adviser: { label: "مشاور" },
   service: { label: "خدمت" },
   center: { label: "مرکز" },
+  province: { label: "استان" },
   city: { label: "شهر" },
   userTariff: { label: "تعرفه (ریال)", type: "money" },
   acceptorFee: { label: "حق مشاور (ریال)", type: "money" },
   isEms: { label: "مورد حاد", type: "bool" },
 };
 
-const EVENT_GROUP_KEYS: Record<string, { label: string }> = {
-  status: { label: "وضعیت" },
-  service: { label: "خدمت" },
-  center: { label: "مرکز" },
-  month: { label: "ماه شمسی" },
+const EVENT_GROUPS = {
+  status: { label: "وضعیت", sql: "e.`status`" },
+  service: { label: "خدمت", sql: "s.`name`" },
+  center: { label: "مرکز", sql: "c.`title`" },
+  adviser: { label: "مشاور", sql: "u.`name`" },
+  month: { label: "ماه شمسی", dateCol: "e.`startDate`" },
 };
 
-const EVENT_METRICS: Record<string, { label: string }> = {
+const EVENT_METRICS: Record<string, ColDef> = {
   count: { label: "تعداد جلسات" },
   "sum:userTariff": { label: "جمع تعرفه (ریال)" },
   "sum:acceptorFee": { label: "جمع حق مشاور (ریال)" },
   "avg:userTariff": { label: "میانگین تعرفه (ریال)" },
 };
 
+const eventSelect = {
+  id: true, trackingCode: true, startDate: true, endDate: true, status: true, topic: true,
+  userTariff: true, acceptorFee: true, isEms: true,
+  user: { select: { name: true, family: true, nid: true, mobile: true } },
+  acceptor: { select: { name: true, family: true } },
+  service: { select: { short: true, name: true } },
+  center: { select: { title: true, cityTitle: true, provinceTitle: true } },
+} as const;
+
+function mapEvent(e: any) {
+  return {
+    id: e.id,
+    trackingCode: e.trackingCode,
+    startDate: e.startDate,
+    endDate: e.endDate,
+    status: e.status,
+    topic: e.topic,
+    userName: e.user ? `${e.user.name ?? ""} ${e.user.family ?? ""}`.trim() : null,
+    userNid: e.user?.nid != null ? String(e.user.nid) : null,
+    userMobile: e.user?.mobile != null ? String(e.user.mobile) : null,
+    adviser: e.acceptor ? `${e.acceptor.name ?? ""} ${e.acceptor.family ?? ""}`.trim() : null,
+    service: e.service ? e.service.short || e.service.name : null,
+    center: e.center?.title ?? null,
+    province: e.center?.provinceTitle ?? null,
+    city: e.center?.cityTitle ?? null,
+    userTariff: e.userTariff,
+    acceptorFee: e.acceptorFee,
+    isEms: e.isEms,
+  };
+}
+
 async function reportEvents(ctx: Ctx) {
+  if (ctx.mode === "summary") return summarizeEvents(ctx);
+
   const where: any = {};
-  if (ctx.filters.status) where.status = ctx.filters.status;
-  if (ctx.serviceId !== null) where.serviceId = ctx.serviceId;
-  if (ctx.centerId !== null) where.centerId = ctx.centerId;
+  if (ctx.filters?.status) where.status = ctx.filters?.status;
+  if (ctx.filters?.doneOnly === "1") where.endDate = { not: null };
+  if (ctx.filters?.doneOnly === "0") where.endDate = null;
+  if (ctx.serviceId != null) where.serviceId = ctx.serviceId;
+  if (ctx.centerId != null) where.centerId = ctx.centerId;
   if (ctx.fromDate || ctx.toDate) {
     where.startDate = {};
     if (ctx.fromDate) where.startDate.gte = ctx.fromDate;
     if (ctx.toDate) where.startDate.lte = ctx.toDate;
   }
   if (ctx.q) {
-    const asNum = num(ctx.q);
+    const asNum = num2(ctx.q);
     where.OR = [
       { topic: { contains: ctx.q } },
       { user: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }, { username: { contains: ctx.q } }] } },
+      { acceptor: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } },
       ...(asNum !== null ? [{ trackingCode: asNum }, { id: asNum }] : []),
     ];
   }
@@ -169,60 +400,49 @@ async function reportEvents(ctx: Ctx) {
     id: { id: ctx.sortDir },
     trackingCode: { trackingCode: ctx.sortDir },
     startDate: { startDate: ctx.sortDir },
+    endDate: { endDate: ctx.sortDir },
     status: { status: ctx.sortDir },
     userTariff: { userTariff: ctx.sortDir },
     acceptorFee: { acceptorFee: ctx.sortDir },
     userName: { user: { family: ctx.sortDir } },
+    adviser: { acceptor: { family: ctx.sortDir } },
   };
   const orderBy = sortMap[ctx.body.sort?.key ?? "startDate"] ?? sortMap.startDate;
 
-  const select = {
-    id: true, trackingCode: true, startDate: true, status: true, topic: true,
-    userTariff: true, acceptorFee: true, isEms: true,
-    user: { select: { name: true, family: true, nid: true } },
-    service: { select: { short: true, name: true } },
-    center: { select: { title: true, cityTitle: true } },
-  } as const;
-
-  if (ctx.mode === "detail") {
-    const [total, rows] = await Promise.all([
-      db.event.count({ where }),
-      db.event.findMany({ where, select, orderBy, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
-    ]);
-    return ok({
-      columns: EVENT_COLUMNS,
-      rows: rows.map(mapEvent),
-      total, page: ctx.page, pageSize: ctx.pageSize,
-      groupKeys: null, metrics: null,
-    });
-  }
-
-  // خلاصه
-  const rows = await db.event.findMany({ where, select, orderBy: { startDate: "desc" }, take: SUMMARY_CAP });
-  const mapped = rows.map(mapEvent);
-  return summarize(ctx, mapped, EVENT_GROUP_KEYS, EVENT_METRICS);
+  return detailResponse(
+    ctx,
+    EVENT_COLUMNS,
+    async () => (await db.event.findMany({ where, select: eventSelect, orderBy, take: SUMMARY_CAP })).map(mapEvent),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.event.count({ where }),
+        db.event.findMany({ where, select: eventSelect, orderBy, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapEvent), total };
+    },
+    "report-events",
+    "startDate",
+  );
 }
 
-function mapEvent(e: any) {
-  return {
-    id: e.id,
-    trackingCode: e.trackingCode,
-    startDate: e.startDate,
-    status: e.status,
-    topic: e.topic,
-    userName: e.user ? `${e.user.name ?? ""} ${e.user.family ?? ""}`.trim() : null,
-    userNid: e.user?.nid ?? null,
-    service: e.service ? e.service.short || e.service.name : null,
-    center: e.center?.title ?? null,
-    city: e.center?.cityTitle ?? null,
-    userTariff: e.userTariff,
-    acceptorFee: e.acceptorFee,
-    isEms: e.isEms,
-  };
+async function summarizeEvents(ctx: Ctx) {
+  const { where, args } = eventWhere(ctx.q, ctx.serviceId ?? null, ctx.centerId ?? null, ctx.fromDate, ctx.toDate);
+  const extra: string[] = [];
+  const extraArgs: unknown[] = [];
+  if (ctx.filters?.status) { extra.push("e.`status` = ?"); extraArgs.push(ctx.filters?.status); }
+  if (ctx.filters?.doneOnly === "1") extra.push("e.`endDate` IS NOT NULL");
+  if (ctx.filters?.doneOnly === "0") extra.push("e.`endDate` IS NULL");
+  const joins = " LEFT JOIN `Services` s ON e.`serviceId` = s.`id` LEFT JOIN `Centers` c ON e.`centerId` = c.`id` LEFT JOIN `Users` u ON e.`acceptorId` = u.`id`";
+  return summarizeSql(
+    ctx,
+    { from: "`Events` e", joins, where: where + (extra.length ? " AND " + extra.join(" AND ") : ""), args: [...args, ...extraArgs] },
+    { ...EVENT_GROUPS },
+    EVENT_METRICS,
+  );
 }
 
-// ------------------------------------------------------------ مالی
-const FINANCE_COLUMNS: Record<string, { label: string }> = {
+// ============================================================ مالی
+const FINANCE_COLUMNS: Record<string, ColDef> = {
   id: { label: "شناسه" },
   startDate: { label: "تاریخ جلسه", type: "date" },
   status: { label: "وضعیت" },
@@ -236,14 +456,14 @@ const FINANCE_COLUMNS: Record<string, { label: string }> = {
   supervisorFee: { label: "حق نظارت (ریال)", type: "money" },
 };
 
-const FINANCE_GROUP_KEYS: Record<string, { label: string }> = {
-  status: { label: "وضعیت" },
-  service: { label: "خدمت" },
-  center: { label: "مرکز" },
-  month: { label: "ماه شمسی" },
+const FINANCE_GROUPS = {
+  status: { label: "وضعیت", sql: "e.`status`" },
+  service: { label: "خدمت", sql: "s.`name`" },
+  center: { label: "مرکز", sql: "c.`title`" },
+  month: { label: "ماه شمسی", dateCol: "e.`startDate`" },
 };
 
-const FINANCE_METRICS: Record<string, { label: string }> = {
+const FINANCE_METRICS: Record<string, ColDef> = {
   count: { label: "تعداد جلسات" },
   "sum:userTariff": { label: "جمع تعرفه (ریال)" },
   "sum:acceptorFee": { label: "جمع حق مشاور (ریال)" },
@@ -253,8 +473,8 @@ const FINANCE_METRICS: Record<string, { label: string }> = {
 
 async function reportFinance(ctx: Ctx) {
   const where: any = {};
-  if (ctx.serviceId !== null) where.serviceId = ctx.serviceId;
-  if (ctx.centerId !== null) where.centerId = ctx.centerId;
+  if (ctx.serviceId != null) where.serviceId = ctx.serviceId;
+  if (ctx.centerId != null) where.centerId = ctx.centerId;
   if (ctx.fromDate || ctx.toDate) {
     where.startDate = {};
     if (ctx.fromDate) where.startDate.gte = ctx.fromDate;
@@ -270,39 +490,39 @@ async function reportFinance(ctx: Ctx) {
     center: { select: { title: true } },
   } as const;
 
-  if (ctx.mode === "detail") {
-    const [total, rows] = await Promise.all([
-      db.event.count({ where }),
-      db.event.findMany({ where, select, orderBy: { startDate: "desc" }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
-    ]);
-    return ok({
-      columns: FINANCE_COLUMNS,
-      rows: rows.map((e) => ({
-        id: e.id, startDate: e.startDate, status: e.status,
-        userName: e.user ? `${e.user.name ?? ""} ${e.user.family ?? ""}`.trim() : null,
-        service: e.service ? e.service.short || e.service.name : null,
-        center: e.center?.title ?? null,
-        userTariff: e.userTariff, acceptorFee: e.acceptorFee, centerFee: e.centerFee,
-        adminFee: e.adminFee, supervisorFee: e.supervisorFee,
-      })),
-      total, page: ctx.page, pageSize: ctx.pageSize,
-      groupKeys: null, metrics: null,
-    });
-  }
-  const rows = await db.event.findMany({ where, select, orderBy: { startDate: "desc" }, take: MONTHLY_CAP });
-  const mapped = rows.map((e: any) => ({
+  const mapF = (e: any) => ({
     id: e.id, startDate: e.startDate, status: e.status,
     userName: e.user ? `${e.user.name ?? ""} ${e.user.family ?? ""}`.trim() : null,
     service: e.service ? e.service.short || e.service.name : null,
     center: e.center?.title ?? null,
     userTariff: e.userTariff, acceptorFee: e.acceptorFee, centerFee: e.centerFee,
     adminFee: e.adminFee, supervisorFee: e.supervisorFee,
-  }));
-  return summarize(ctx, mapped, FINANCE_GROUP_KEYS, FINANCE_METRICS);
+  });
+
+  if (ctx.mode === "summary") {
+    const { where: wsql, args } = eventWhere(ctx.q, ctx.serviceId ?? null, ctx.centerId ?? null, ctx.fromDate, ctx.toDate);
+    const joins = " LEFT JOIN `Services` s ON e.`serviceId` = s.`id` LEFT JOIN `Centers` c ON e.`centerId` = c.`id`";
+    return summarizeSql(ctx, { from: "`Events` e", joins, where: wsql, args }, FINANCE_GROUPS, FINANCE_METRICS);
+  }
+
+  const res = await detailResponse(
+    ctx, FINANCE_COLUMNS,
+    async () => (await db.event.findMany({ where, select, orderBy: { startDate: "desc" }, take: SUMMARY_CAP })).map(mapF),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.event.count({ where }),
+        db.event.findMany({ where, select, orderBy: { startDate: "desc" }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapF), total };
+    },
+    "report-finance",
+    "startDate",
+  );
+  return res;
 }
 
-// ------------------------------------------------------------ کاربران
-const USER_COLUMNS: Record<string, { label: string }> = {
+// ============================================================ کاربران
+const USER_COLUMNS: Record<string, ColDef> = {
   id: { label: "شناسه" },
   nid: { label: "کد ملی" },
   username: { label: "نام کاربری" },
@@ -315,25 +535,25 @@ const USER_COLUMNS: Record<string, { label: string }> = {
   confirm: { label: "تایید شده", type: "bool" },
 };
 
-const USER_GROUP_KEYS: Record<string, { label: string }> = {
-  gender: { label: "جنسیت" },
-  blocked: { label: "وضعیت مسدودی" },
-  month: { label: "ماه عضویت" },
+const USER_GROUPS = {
+  gender: { label: "جنسیت", sql: "u.`gender`" },
+  blocked: { label: "وضعیت مسدودی", sql: "u.`blocked`" },
+  month: { label: "ماه عضویت", dateCol: "u.`signupDate`" },
 };
 
-const USER_METRICS: Record<string, { label: string }> = { count: { label: "تعداد کاربران" } };
+const USER_METRICS: Record<string, ColDef> = { count: { label: "تعداد کاربران" } };
 
 async function reportUsers(ctx: Ctx) {
   const where: any = {};
-  if (ctx.filters.blocked === "true") where.blocked = true;
-  if (ctx.filters.blocked === "false") where.blocked = false;
+  if (ctx.filters?.blocked === "true") where.blocked = true;
+  if (ctx.filters?.blocked === "false") where.blocked = false;
   if (ctx.fromDate || ctx.toDate) {
     where.signupDate = {};
     if (ctx.fromDate) where.signupDate.gte = ctx.fromDate;
     if (ctx.toDate) where.signupDate.lte = ctx.toDate;
   }
   if (ctx.q) {
-    const asNum = num(ctx.q);
+    const asNum = num2(ctx.q);
     where.OR = [
       { name: { contains: ctx.q } },
       { family: { contains: ctx.q } },
@@ -342,29 +562,37 @@ async function reportUsers(ctx: Ctx) {
     ];
   }
 
-  const select = {
-    id: true, nid: true, username: true, name: true, family: true,
-    mobile: true, gender: true, signupDate: true, blocked: true, confirm: true,
-  } as const;
-
-  if (ctx.mode === "detail") {
-    const [total, rows] = await Promise.all([
-      db.user.count({ where }),
-      db.user.findMany({ where, select, orderBy: { id: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
-    ]);
-    return ok({
-      columns: USER_COLUMNS,
-      rows: rows.map((u) => ({ ...u, gender: (u as any).gender ?? null })),
-      total, page: ctx.page, pageSize: ctx.pageSize,
-      groupKeys: null, metrics: null,
-    });
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.filters?.blocked === "true") parts.push("u.`blocked` = 1");
+    if (ctx.filters?.blocked === "false") parts.push("u.`blocked` = 0");
+    if (ctx.fromDate) { parts.push("u.`signupDate` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("u.`signupDate` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("(u.`name` LIKE ? OR u.`family` LIKE ? OR u.`username` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`, `%${ctx.q}%`); }
+    return summarizeSql(ctx, { from: "`Users` u", where: `WHERE ${parts.join(" AND ")}`, args }, USER_GROUPS, USER_METRICS);
   }
-  const rows = await db.user.findMany({ where, select, orderBy: { id: "desc" }, take: MONTHLY_CAP });
-  return summarize(ctx, rows, USER_GROUP_KEYS, USER_METRICS);
+
+  const res = await detailResponse(
+    ctx, USER_COLUMNS,
+    async () => (await db.user.findMany({ where, orderBy: { id: ctx.sortDir }, take: SUMMARY_CAP })).map((u: any) => ({
+      ...u, nid: u.nid != null ? String(u.nid) : null, mobile: u.mobile != null ? String(u.mobile) : null,
+    })),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.user.count({ where }),
+        db.user.findMany({ where, orderBy: { id: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map((u: any) => ({ ...u, nid: u.nid != null ? String(u.nid) : null, mobile: u.mobile != null ? String(u.mobile) : null })), total };
+    },
+    "report-users",
+    "id",
+  );
+  return res;
 }
 
-// ------------------------------------------------------------ رزروها
-const RESERVE_COLUMNS: Record<string, { label: string }> = {
+// ============================================================ رزروها
+const RESERVE_COLUMNS: Record<string, ColDef> = {
   id: { label: "شناسه" },
   date: { label: "تاریخ رزرو", type: "date" },
   eventTrackingCode: { label: "کد رهگیری جلسه" },
@@ -372,12 +600,12 @@ const RESERVE_COLUMNS: Record<string, { label: string }> = {
   userName: { label: "مراجع" },
 };
 
-const RESERVE_GROUP_KEYS: Record<string, { label: string }> = {
-  eventStatus: { label: "وضعیت جلسه" },
-  month: { label: "ماه شمسی" },
+const RESERVE_GROUPS = {
+  eventStatus: { label: "وضعیت جلسه", sql: "e.`status`" },
+  month: { label: "ماه شمسی", dateCol: "r.`date`" },
 };
 
-const RESERVE_METRICS: Record<string, { label: string }> = { count: { label: "تعداد رزروها" } };
+const RESERVE_METRICS: Record<string, ColDef> = { count: { label: "تعداد رزروها" } };
 
 async function reportReserves(ctx: Ctx) {
   const where: any = {};
@@ -393,35 +621,43 @@ async function reportReserves(ctx: Ctx) {
     event: { select: { trackingCode: true, status: true, user: { select: { name: true, family: true } } } },
   } as const;
 
-  if (ctx.mode === "detail") {
-    const [total, rows] = await Promise.all([
-      db.eventReserve.count({ where }),
-      db.eventReserve.findMany({ where, select, orderBy: { date: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
-    ]);
-    return ok({
-      columns: RESERVE_COLUMNS,
-      rows: rows.map((r: any) => ({
-        id: r.id, date: r.date,
-        eventTrackingCode: r.event?.trackingCode ?? null,
-        eventStatus: r.event?.status ?? null,
-        userName: r.event?.user ? `${r.event.user.name ?? ""} ${r.event.user.family ?? ""}`.trim() : null,
-      })),
-      total, page: ctx.page, pageSize: ctx.pageSize,
-      groupKeys: null, metrics: null,
-    });
-  }
-  const rows = await db.eventReserve.findMany({ where, select, orderBy: { date: "desc" }, take: SUMMARY_CAP });
-  const mapped = rows.map((r: any) => ({
+  const mapR = (r: any) => ({
     id: r.id, date: r.date,
     eventTrackingCode: r.event?.trackingCode ?? null,
     eventStatus: r.event?.status ?? null,
     userName: r.event?.user ? `${r.event.user.name ?? ""} ${r.event.user.family ?? ""}`.trim() : null,
-  }));
-  return summarize(ctx, mapped, RESERVE_GROUP_KEYS, RESERVE_METRICS);
+  });
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.fromDate) { parts.push("r.`date` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("r.`date` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("(ru.`name` LIKE ? OR ru.`family` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    return summarizeSql(
+      ctx,
+      { from: "`EventReserves` r", joins: " LEFT JOIN `Events` e ON r.`eventId` = e.`id` LEFT JOIN `Users` ru ON e.`userId` = ru.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
+      RESERVE_GROUPS, RESERVE_METRICS,
+    );
+  }
+
+  return detailResponse(
+    ctx, RESERVE_COLUMNS,
+    async () => (await db.eventReserve.findMany({ where, select, orderBy: { date: ctx.sortDir }, take: SUMMARY_CAP })).map(mapR),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.eventReserve.count({ where }),
+        db.eventReserve.findMany({ where, select, orderBy: { date: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapR), total };
+    },
+    "report-reserves",
+    "date",
+  );
 }
 
-// ------------------------------------------------------------ ارجاعات
-const REFERRAL_COLUMNS: Record<string, { label: string }> = {
+// ============================================================ ارجاعات
+const REFERRAL_COLUMNS: Record<string, ColDef> = {
   id: { label: "شناسه" },
   refId: { label: "کد ارجاع" },
   creationDate: { label: "تاریخ ارجاع", type: "date" },
@@ -429,32 +665,32 @@ const REFERRAL_COLUMNS: Record<string, { label: string }> = {
   userNid: { label: "کد ملی" },
   userMobile: { label: "موبایل" },
   service: { label: "خدمت" },
-  sessionsCount: { label: "تعداد جلسات" },
+  sessionsCount: { label: "تعداد جلسات", type: "num" },
   status: { label: "وضعیت" },
   description: { label: "توضیح" },
 };
 
-const REFERRAL_GROUP_KEYS: Record<string, { label: string }> = {
-  status: { label: "وضعیت" },
-  service: { label: "خدمت" },
-  month: { label: "ماه شمسی" },
+const REFERRAL_GROUPS = {
+  status: { label: "وضعیت", sql: "r.`status`" },
+  service: { label: "خدمت", sql: "s.`name`" },
+  month: { label: "ماه شمسی", dateCol: "r.`creationDate`" },
 };
 
-const REFERRAL_METRICS: Record<string, { label: string }> = {
+const REFERRAL_METRICS: Record<string, ColDef> = {
   count: { label: "تعداد ارجاعات" },
   "sum:sessionsCount": { label: "جمع جلسات پیش‌بینی‌شده" },
 };
 
 async function reportReferrals(ctx: Ctx) {
   const where: any = {};
-  if (ctx.filters.status) where.status = ctx.filters.status;
+  if (ctx.filters?.status) where.status = ctx.filters?.status;
   if (ctx.fromDate || ctx.toDate) {
     where.creationDate = {};
     if (ctx.fromDate) where.creationDate.gte = ctx.fromDate;
     if (ctx.toDate) where.creationDate.lte = ctx.toDate;
   }
   if (ctx.q) {
-    const asNum = num(ctx.q);
+    const asNum = num2(ctx.q);
     where.OR = [
       { userName: { contains: ctx.q } },
       { description: { contains: ctx.q } },
@@ -468,52 +704,66 @@ async function reportReferrals(ctx: Ctx) {
     service: { select: { short: true, name: true } },
   } as const;
 
-  if (ctx.mode === "detail") {
-    const [total, rows] = await Promise.all([
-      db.referr.count({ where }),
-      db.referr.findMany({ where, select, orderBy: { id: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
-    ]);
-    return ok({
-      columns: REFERRAL_COLUMNS,
-      rows: rows.map((r: any) => ({ ...r, service: r.service ? r.service.short || r.service.name : null })),
-      total, page: ctx.page, pageSize: ctx.pageSize,
-      groupKeys: null, metrics: null,
-    });
+  const mapRef = (r: any) => ({ ...r, service: r.service ? r.service.short || r.service.name : null, userNid: r.userNid != null ? String(r.userNid) : null, userMobile: r.userMobile != null ? String(r.userMobile) : null, refId: r.refId != null ? String(r.refId) : null });
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.filters?.status) { parts.push("r.`status` = ?"); args.push(ctx.filters?.status); }
+    if (ctx.fromDate) { parts.push("r.`creationDate` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("r.`creationDate` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("(r.`userName` LIKE ? OR r.`description` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    return summarizeSql(
+      ctx,
+      { from: "`Referrs` r", joins: " LEFT JOIN `Services` s ON r.`serviceId` = s.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
+      REFERRAL_GROUPS, REFERRAL_METRICS,
+    );
   }
-  const rows = await db.referr.findMany({ where, select, orderBy: { id: "desc" }, take: SUMMARY_CAP });
-  const mapped = rows.map((r: any) => ({ ...r, service: r.service ? r.service.short || r.service.name : null }));
-  return summarize(ctx, mapped, REFERRAL_GROUP_KEYS, REFERRAL_METRICS);
+
+  return detailResponse(
+    ctx, REFERRAL_COLUMNS,
+    async () => (await db.referr.findMany({ where, select, orderBy: { id: ctx.sortDir }, take: SUMMARY_CAP })).map(mapRef),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.referr.count({ where }),
+        db.referr.findMany({ where, select, orderBy: { id: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapRef), total };
+    },
+    "report-referrals",
+    "id",
+  );
 }
 
-// ------------------------------------------------------------ پیامک‌ها
-const SMS_COLUMNS: Record<string, { label: string }> = {
+// ============================================================ پیامک‌ها
+const SMS_COLUMNS: Record<string, ColDef> = {
   id: { label: "شناسه" },
   createTime: { label: "تاریخ ارسال", type: "date" },
   number: { label: "شماره" },
   receiverName: { label: "گیرنده" },
   message: { label: "متن پیام" },
-  efforts: { label: "تعداد تلاش" },
+  efforts: { label: "تعداد تلاش", type: "num" },
   status: { label: "وضعیت" },
   response: { label: "پاسخ سامانه" },
 };
 
-const SMS_GROUP_KEYS: Record<string, { label: string }> = {
-  status: { label: "وضعیت" },
-  month: { label: "ماه شمسی" },
+const SMS_GROUPS = {
+  status: { label: "وضعیت", sql: "s.`status`" },
+  month: { label: "ماه شمسی", dateCol: "s.`createTime`" },
 };
 
-const SMS_METRICS: Record<string, { label: string }> = { count: { label: "تعداد پیامک" } };
+const SMS_METRICS: Record<string, ColDef> = { count: { label: "تعداد پیامک" } };
 
 async function reportSms(ctx: Ctx) {
   const where: any = {};
-  if (ctx.filters.status) where.status = ctx.filters.status;
+  if (ctx.filters?.status) where.status = ctx.filters?.status;
   if (ctx.fromDate || ctx.toDate) {
     where.createTime = {};
     if (ctx.fromDate) where.createTime.gte = ctx.fromDate;
     if (ctx.toDate) where.createTime.lte = ctx.toDate;
   }
   if (ctx.q) {
-    const asNum = num(ctx.q);
+    const asNum = num2(ctx.q);
     where.OR = [
       { message: { contains: ctx.q } },
       { receiver: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } },
@@ -526,65 +776,547 @@ async function reportSms(ctx: Ctx) {
     receiver: { select: { name: true, family: true } },
   } as const;
 
-  if (ctx.mode === "detail") {
-    const [total, rows] = await Promise.all([
-      db.sms.count({ where }),
-      db.sms.findMany({ where, select, orderBy: { id: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
-    ]);
-    return ok({
-      columns: SMS_COLUMNS,
-      rows: rows.map((s: any) => ({ ...s, receiverName: s.receiver ? `${s.receiver.name ?? ""} ${s.receiver.family ?? ""}`.trim() : null })),
-      total, page: ctx.page, pageSize: ctx.pageSize,
-      groupKeys: null, metrics: null,
-    });
+  const mapS = (s: any) => ({ ...s, number: s.number != null ? String(s.number) : null, receiverName: s.receiver ? `${s.receiver.name ?? ""} ${s.receiver.family ?? ""}`.trim() : null });
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.filters?.status) { parts.push("s.`status` = ?"); args.push(ctx.filters?.status); }
+    if (ctx.fromDate) { parts.push("s.`createTime` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("s.`createTime` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("s.`message` LIKE ?"); args.push(`%${ctx.q}%`); }
+    return summarizeSql(ctx, { from: "`SMS` s", where: `WHERE ${parts.join(" AND ")}`, args }, SMS_GROUPS, SMS_METRICS);
   }
-  const rows = await db.sms.findMany({ where, select, orderBy: { id: "desc" }, take: SUMMARY_CAP });
-  const mapped = rows.map((s: any) => ({ ...s, receiverName: s.receiver ? `${s.receiver.name ?? ""} ${s.receiver.family ?? ""}`.trim() : null }));
-  return summarize(ctx, mapped, SMS_GROUP_KEYS, SMS_METRICS);
+
+  return detailResponse(
+    ctx, SMS_COLUMNS,
+    async () => (await db.sms.findMany({ where, select, orderBy: { id: ctx.sortDir }, take: SUMMARY_CAP })).map(mapS),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.sms.count({ where }),
+        db.sms.findMany({ where, select, orderBy: { id: ctx.sortDir }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapS), total };
+    },
+    "report-sms",
+    "id",
+  );
 }
 
-// ------------------------------------------------------------ حالت خلاصه
-function summarize(ctx: Ctx, rows: any[], groupKeys: Record<string, { label: string }>, metrics: Record<string, { label: string }>) {
-  const groupBy = ctx.body.groupBy && groupKeys[ctx.body.groupBy] ? ctx.body.groupBy : "status";
-  const metric = ctx.body.metric && metrics[ctx.body.metric] ? ctx.body.metric : "count";
+// ============================================================ موارد حاد (EMS)
+const EMS_COLUMNS: Record<string, ColDef> = {
+  id: { label: "شناسه" },
+  date: { label: "تاریخ ثبت", type: "date" },
+  userName: { label: "مراجع" },
+  userNid: { label: "کد ملی" },
+  province: { label: "استان" },
+  city: { label: "شهر" },
+  adviser: { label: "مشاور" },
+  adviserMobile: { label: "موبایل مشاور" },
+  emsType: { label: "نوع مورد حاد" },
+  suicidalFrom: { label: "عوامل خودکشی" },
+  severity: { label: "شدت خطر" },
+  payStatus: { label: "وضعیت پرداخت" },
+  amount: { label: "مبلغ (ریال)", type: "money" },
+  eventStatus: { label: "وضعیت جلسه" },
+};
 
-  const groups = new Map<string, { raw: number; agg: number[]; sample?: any }>();
-  for (const r of rows) {
-    let key: string;
-    if (groupBy === "month") {
-      const d = r.startDate ?? r.date ?? r.creationDate ?? r.signupDate ?? r.createTime;
-      key = d ? monthLabel(d) : "بدون تاریخ";
-    } else {
-      key = String(r[groupBy] ?? "نامشخص");
-    }
-    const g = groups.get(key) ?? { raw: 0, agg: [] };
-    g.raw++;
-    if (metric.startsWith("sum:") || metric.startsWith("avg:")) {
-      const field = metric.split(":")[1];
-      g.agg.push(Number(r[field] ?? 0));
-    }
-    groups.set(key, g);
+const EMS_GROUPS = {
+  severity: { label: "شدت خطر", sql: "ee.`severity`" },
+  payStatus: { label: "وضعیت پرداخت", sql: "ee.`hadPaymentStatus`" },
+  month: { label: "ماه شمسی", dateCol: "ee.`dateTime`" },
+};
+
+const EMS_METRICS: Record<string, ColDef> = {
+  count: { label: "تعداد موارد" },
+  "sum:hadPaymentAmount": { label: "جمع مبلغ پرداخت (ریال)" },
+};
+
+async function reportEms(ctx: Ctx) {
+  const where: any = {};
+  if (ctx.filters?.severity) where.severity = ctx.filters?.severity;
+  if (ctx.fromDate || ctx.toDate) {
+    where.dateTime = {};
+    if (ctx.fromDate) where.dateTime.gte = ctx.fromDate;
+    if (ctx.toDate) where.dateTime.lte = ctx.toDate;
+  }
+  if (ctx.q) {
+    const asNum = num2(ctx.q);
+    where.OR = [
+      { actionsTaken: { contains: ctx.q } },
+      { event: { user: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } } },
+      ...(asNum !== null ? [{ event: { nid: asNum } }] : []),
+    ];
   }
 
-  const result = Array.from(groups.entries())
-    .map(([name, g]) => {
-      let value = g.raw;
-      if (metric.startsWith("sum:")) value = g.agg.reduce((s, x) => s + x, 0);
-      else if (metric.startsWith("avg:")) value = g.agg.length ? Math.round(g.agg.reduce((s, x) => s + x, 0) / g.agg.length) : 0;
-      return { name, value };
-    })
-    .sort((a, b) => b.value - a.value);
-
-  return ok({
-    columns: null,
-    rows: result,
-    total: result.length,
-    summary: {
-      groupBy: { key: groupBy, label: groupKeys[groupBy].label },
-      metric: { key: metric, label: metrics[metric].label },
-      sourceRows: rows.length,
-      capped: rows.length >= SUMMARY_CAP,
+  const select = {
+    id: true, dateTime: true, emsType: true, suicidalFrom: true, severity: true,
+    hadPaymentStatus: true, hadPaymentAmount: true,
+    event: {
+      select: {
+        status: true,
+        user: { select: { name: true, family: true, nid: true } },
+        acceptor: { select: { name: true, family: true, mobile: true } },
+        center: { select: { provinceTitle: true, cityTitle: true } },
+      },
     },
-    groupKeys, metrics,
+  } as const;
+
+  const mapE = (ee: any) => ({
+    id: ee.id,
+    date: ee.dateTime,
+    userName: ee.event?.user ? `${ee.event.user.name ?? ""} ${ee.event.user.family ?? ""}`.trim() : null,
+    userNid: ee.event?.user?.nid != null ? String(ee.event.user.nid) : null,
+    province: ee.event?.center?.provinceTitle ?? null,
+    city: ee.event?.center?.cityTitle ?? null,
+    adviser: ee.event?.acceptor ? `${ee.event.acceptor.name ?? ""} ${ee.event.acceptor.family ?? ""}`.trim() : null,
+    adviserMobile: ee.event?.acceptor?.mobile != null ? String(ee.event.acceptor.mobile) : null,
+    emsType: ee.emsType,
+    suicidalFrom: ee.suicidalFrom,
+    severity: ee.severity,
+    payStatus: ee.hadPaymentStatus,
+    amount: ee.hadPaymentAmount != null ? Number(ee.hadPaymentAmount) : 0,
+    eventStatus: ee.event?.status ?? null,
   });
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.filters?.severity) { parts.push("ee.`severity` = ?"); args.push(ctx.filters?.severity); }
+    if (ctx.fromDate) { parts.push("ee.`dateTime` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("ee.`dateTime` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("(eu.`name` LIKE ? OR eu.`family` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    return summarizeSql(
+      ctx,
+      { from: "`EventsEms` ee", joins: " LEFT JOIN `Events` e ON ee.`eventId` = e.`id` LEFT JOIN `Users` eu ON e.`userId` = eu.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
+      EMS_GROUPS, EMS_METRICS,
+    );
+  }
+
+  return detailResponse(
+    ctx, EMS_COLUMNS,
+    async () => (await db.eventsEms.findMany({ where, select, orderBy: { dateTime: "desc" }, take: SUMMARY_CAP })).map(mapE),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.eventsEms.count({ where }),
+        db.eventsEms.findMany({ where, select, orderBy: { dateTime: "desc" }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapE), total };
+    },
+    "report-ems",
+    "dateTime",
+  );
+}
+
+// ============================================================ جلسات گروهی
+const GROUP_COLUMNS: Record<string, ColDef> = {
+  id: { label: "شناسه" },
+  sessionNumber: { label: "شمارهٔ جلسه", type: "num" },
+  topic: { label: "موضوع" },
+  groupTitle: { label: "گروه" },
+  membersCount: { label: "تعداد حاضران", type: "num" },
+  center: { label: "مرکز" },
+  adviser: { label: "مشاور" },
+  startDate: { label: "تاریخ جلسه", type: "date" },
+  endDate: { label: "تاریخ پایان", type: "date" },
+  status: { label: "وضعیت" },
+  userTariff: { label: "تعرفه (ریال)", type: "money" },
+  acceptorFee: { label: "حق مشاور (ریال)", type: "money" },
+};
+
+const GROUP_GROUPS = {
+  status: { label: "وضعیت", sql: "g.`status`" },
+  center: { label: "مرکز", sql: "c.`title`" },
+  adviser: { label: "مشاور", sql: "u.`name`" },
+  month: { label: "ماه شمسی", dateCol: "g.`startDate`" },
+};
+
+const GROUP_METRICS: Record<string, ColDef> = {
+  count: { label: "تعداد جلسات" },
+  "sum:userTariff": { label: "جمع تعرفه (ریال)" },
+  "sum:acceptorFee": { label: "جمع حق مشاور (ریال)" },
+};
+
+async function reportGroupEvents(ctx: Ctx) {
+  const where: any = {};
+  if (ctx.filters?.status) where.status = ctx.filters?.status;
+  if (ctx.filters?.doneOnly === "1") where.endDate = { not: null };
+  if (ctx.filters?.doneOnly === "0") where.endDate = null;
+  if (ctx.serviceId != null) where.serviceId = ctx.serviceId;
+  if (ctx.centerId != null) where.centerId = ctx.centerId;
+  if (ctx.fromDate || ctx.toDate) {
+    where.startDate = {};
+    if (ctx.fromDate) where.startDate.gte = ctx.fromDate;
+    if (ctx.toDate) where.startDate.lte = ctx.toDate;
+  }
+  if (ctx.q) {
+    where.OR = [
+      { topic: { contains: ctx.q } },
+      { group: { title: { contains: ctx.q } } },
+    ];
+  }
+
+  const select = {
+    id: true, sessionNumber: true, topic: true, startDate: true, endDate: true, status: true,
+    userTariff: true, acceptorFee: true, acceptorId: true, centerId: true, groupId: true,
+    members: { select: { id: true } },
+  } as const;
+
+  const mapG = (g: any, adviserName: string | null, centerTitle: string | null, groupTitle: string | null) => ({
+    id: g.id, sessionNumber: g.sessionNumber, topic: g.topic,
+    groupTitle,
+    membersCount: g.members?.length ?? 0,
+    center: centerTitle,
+    adviser: adviserName,
+    startDate: g.startDate, endDate: g.endDate, status: g.status,
+    userTariff: g.userTariff, acceptorFee: g.acceptorFee,
+  });
+
+  const nameMaps = async (rows: any[]) => {
+    const aids = [...new Set(rows.map((g: any) => g.acceptorId).filter((x: number | null) => x != null && x > 0))];
+    const cids = [...new Set(rows.map((g: any) => g.centerId).filter((x: number | null) => x != null && x > 0))];
+    const gids = [...new Set(rows.map((g: any) => g.groupId).filter((x: number | null) => x != null && x > 0))];
+    const [us, cs, gs] = await Promise.all([
+      aids.length ? db.user.findMany({ where: { id: { in: aids } }, select: { id: true, name: true, family: true } }) : [],
+      cids.length ? db.center.findMany({ where: { id: { in: cids } }, select: { id: true, title: true } }) : [],
+      gids.length ? db.group.findMany({ where: { id: { in: gids } }, select: { id: true, title: true } }) : [],
+    ]);
+    return {
+      a: new Map(us.map((u: any) => [u.id, `${u.name ?? ""} ${u.family ?? ""}`.trim()])),
+      c: new Map(cs.map((x: any) => [x.id, x.title])),
+      g: new Map(gs.map((x: any) => [x.id, x.title])),
+    };
+  };
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.filters?.status) { parts.push("g.`status` = ?"); args.push(ctx.filters?.status); }
+    if (ctx.serviceId != null) { parts.push("g.`serviceId` = ?"); args.push(ctx.serviceId); }
+    if (ctx.centerId != null) { parts.push("g.`centerId` = ?"); args.push(ctx.centerId); }
+    if (ctx.fromDate) { parts.push("g.`startDate` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("g.`startDate` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("g.`topic` LIKE ?"); args.push(`%${ctx.q}%`); }
+    const doneF = ctx.filters?.doneOnly === "1" ? " AND g.`endDate` IS NOT NULL" : ctx.filters?.doneOnly === "0" ? " AND g.`endDate` IS NULL" : "";
+    return summarizeSql(
+      ctx,
+      { from: "`GroupEvents` g", joins: " LEFT JOIN `Centers` c ON g.`centerId` = c.`id` LEFT JOIN `Users` u ON g.`acceptorId` = u.`id`", where: `WHERE ${parts.join(" AND ")}` + doneF, args },
+      GROUP_GROUPS, GROUP_METRICS,
+    );
+  }
+
+  return detailResponse(
+    ctx, GROUP_COLUMNS,
+    async () => {
+      const rows = await db.groupEvent.findMany({ where, select, orderBy: { startDate: "desc" }, take: SUMMARY_CAP });
+      const maps = await nameMaps(rows);
+      const g = (row: any) => mapG(row, row.acceptorId ? maps.a.get(row.acceptorId) ?? null : null, row.centerId ? maps.c.get(row.centerId) ?? null : null, maps.g.get(row.groupId) ?? null);
+      return rows.map(g);
+    },
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.groupEvent.count({ where }),
+        db.groupEvent.findMany({ where, select, orderBy: { startDate: "desc" }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      const maps = await nameMaps(rows);
+      const g = (row: any) => mapG(row, row.acceptorId ? maps.a.get(row.acceptorId) ?? null : null, row.centerId ? maps.c.get(row.centerId) ?? null : null, maps.g.get(row.groupId) ?? null);
+      return { rows: rows.map(g), total };
+    },
+    "report-group-events",
+    "startDate",
+  );
+}
+
+// ============================================================ لاگ فعالیت
+const LOG_COLUMNS: Record<string, ColDef> = {
+  id: { label: "شناسه" },
+  timestamp: { label: "زمان", type: "date" },
+  userName: { label: "کاربر" },
+  category: { label: "دسته" },
+  description: { label: "شرح" },
+  level: { label: "سطح", type: "num" },
+  ip: { label: "IP" },
+};
+
+const LOG_GROUPS = {
+  category: { label: "دستهٔ رویداد", sql: "l.`category`" },
+  level: { label: "سطح", sql: "l.`level`" },
+  month: { label: "ماه شمسی", dateCol: "l.`timestamp`" },
+};
+
+const LOG_METRICS: Record<string, ColDef> = { count: { label: "تعداد رویدادها" } };
+
+async function reportLogs(ctx: Ctx) {
+  const where: any = {};
+  if (ctx.fromDate || ctx.toDate) {
+    where.timestamp = {};
+    if (ctx.fromDate) where.timestamp.gte = ctx.fromDate;
+    if (ctx.toDate) where.timestamp.lte = ctx.toDate;
+  }
+  if (ctx.q) where.OR = [{ description: { contains: ctx.q } }, { category: { contains: ctx.q } }, { user: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } }];
+
+  const select = {
+    id: true, timestamp: true, category: true, description: true, level: true, ip: true,
+    user: { select: { name: true, family: true } },
+  } as const;
+
+  const mapL = (l: any) => ({ ...l, userName: l.user ? `${l.user.name ?? ""} ${l.user.family ?? ""}`.trim() : null });
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.fromDate) { parts.push("l.`timestamp` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("l.`timestamp` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("l.`description` LIKE ?"); args.push(`%${ctx.q}%`); }
+    return summarizeSql(ctx, { from: "`Log` l", where: `WHERE ${parts.join(" AND ")}`, args }, LOG_GROUPS, LOG_METRICS);
+  }
+
+  return detailResponse(
+    ctx, LOG_COLUMNS,
+    async () => (await db.log.findMany({ where, select, orderBy: { timestamp: "desc" }, take: SUMMARY_CAP })).map(mapL),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.log.count({ where }),
+        db.log.findMany({ where, select, orderBy: { timestamp: "desc" }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapL), total };
+    },
+    "report-logs",
+    "timestamp",
+  );
+}
+
+// ============================================================ مالیات مشاوران
+const TAX_COLUMNS: Record<string, ColDef> = {
+  id: { label: "شناسه" },
+  userName: { label: "مشاور" },
+  nid: { label: "کد ملی" },
+  year: { label: "سال", type: "num" },
+  month: { label: "ماه", type: "num" },
+  taxAmount: { label: "مالیات (ریال)", type: "money" },
+  totalPayment: { label: "جمع پرداخت (ریال)", type: "money" },
+  exemptionMonths: { label: "ماه‌های معافیت", type: "num" },
+  createdAt: { label: "تاریخ ثبت", type: "date" },
+};
+
+const TAX_GROUPS = {
+  year: { label: "سال", sql: "t.`year`" },
+  month: { label: "ماه", sql: "t.`month`" },
+  user: { label: "مشاور", sql: "u.`name`" },
+};
+
+const TAX_METRICS: Record<string, ColDef> = {
+  count: { label: "تعداد رکورد" },
+  "sum:taxAmount": { label: "جمع مالیات (ریال)" },
+  "sum:totalPayment": { label: "جمع پرداخت (ریال)" },
+};
+
+async function reportTaxes(ctx: Ctx) {
+  const where: any = {};
+  if (ctx.fromDate || ctx.toDate) {
+    where.createdAt = {};
+    if (ctx.fromDate) where.createdAt.gte = ctx.fromDate;
+    if (ctx.toDate) where.createdAt.lte = ctx.toDate;
+  }
+  if (ctx.q) {
+    const asNum = num2(ctx.q);
+    where.OR = [
+      { user: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } },
+      ...(asNum !== null ? [{ nid: asNum }] : []),
+    ];
+  }
+
+  const select = {
+    id: true, nid: true, year: true, month: true, taxAmount: true, totalPayment: true, exemptionMonths: true, createdAt: true,
+    user: { select: { name: true, family: true } },
+  } as const;
+
+  const mapT = (t: any) => ({
+    ...t,
+    nid: t.nid != null ? String(t.nid) : null,
+    userName: t.user ? `${t.user.name ?? ""} ${t.user.family ?? ""}`.trim() : null,
+    taxAmount: Number(t.taxAmount ?? 0),
+    totalPayment: Number(t.totalPayment ?? 0),
+  });
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.fromDate) { parts.push("t.`createdAt` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("t.`createdAt` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("(u.`name` LIKE ? OR u.`family` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    return summarizeSql(
+      ctx,
+      { from: "`ConsultantTax` t", joins: " LEFT JOIN `Users` u ON t.`userId` = u.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
+      TAX_GROUPS, TAX_METRICS,
+    );
+  }
+
+  return detailResponse(
+    ctx, TAX_COLUMNS,
+    async () => (await db.consultantTax.findMany({ where, select, orderBy: [{ year: "desc" }, { month: "desc" }], take: SUMMARY_CAP })).map(mapT),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.consultantTax.count({ where }),
+        db.consultantTax.findMany({ where, select, orderBy: [{ year: "desc" }, { month: "desc" }], skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapT), total };
+    },
+    "report-taxes",
+    "createdAt",
+  );
+}
+
+// ============================================================ سهمیه‌ها (بودجه)
+const BUDGET_COLUMNS: Record<string, ColDef> = {
+  id: { label: "شناسه" },
+  title: { label: "عنوان" },
+  kind: { label: "نوع" },
+  amount: { label: "سقف", type: "money" },
+  used: { label: "استفاده‌شده", type: "money" },
+  reserved: { label: "رزرو", type: "money" },
+  remained: { label: "مانده", type: "money" },
+  assigned: { label: "اختصاص‌یافته", type: "money" },
+  pct: { label: "درصد مصرف", type: "num" },
+  startDate: { label: "شروع", type: "date" },
+  endDate: { label: "پایان", type: "date" },
+};
+
+const BUDGET_GROUPS = {
+  kind: { label: "نوع خدمت", sql: "b.`kind`" },
+  month: { label: "ماه شروع", dateCol: "b.`startDate`" },
+};
+
+const BUDGET_METRICS: Record<string, ColDef> = {
+  count: { label: "تعداد سهمیه" },
+  "sum:amount": { label: "جمع سقف" },
+  "sum:used": { label: "جمع مصرف" },
+};
+
+async function reportBudgets(ctx: Ctx) {
+  const where: any = {};
+  if (ctx.fromDate || ctx.toDate) {
+    where.startDate = {};
+    if (ctx.fromDate) where.startDate.gte = ctx.fromDate;
+    if (ctx.toDate) where.startDate.lte = ctx.toDate;
+  }
+  if (ctx.q) where.OR = [{ title: { contains: ctx.q } }];
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.fromDate) { parts.push("b.`startDate` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("b.`startDate` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("b.`title` LIKE ?"); args.push(`%${ctx.q}%`); }
+    return summarizeSql(ctx, { from: "`Budget` b", where: `WHERE ${parts.join(" AND ")}`, args }, BUDGET_GROUPS, BUDGET_METRICS);
+  }
+
+  const mapB = (b: any) => ({
+    ...b,
+    pct: b.amount > 0 ? Math.round((b.used * 1000) / b.amount) / 10 : 0,
+  });
+
+  return detailResponse(
+    ctx, BUDGET_COLUMNS,
+    async () => (await db.budget.findMany({ where, orderBy: { id: "asc" }, take: SUMMARY_CAP })).map(mapB),
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.budget.count({ where }),
+        db.budget.findMany({ where, orderBy: { id: "asc" }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      return { rows: rows.map(mapB), total };
+    },
+    "report-budgets",
+    "id",
+  );
+}
+
+// ============================================================ درخواست‌های رزرو
+const RREQ_COLUMNS: Record<string, ColDef> = {
+  id: { label: "شناسه" },
+  creationDate: { label: "تاریخ درخواست", type: "date" },
+  userName: { label: "درخواست‌دهنده" },
+  description: { label: "توضیح" },
+  province: { label: "استان" },
+  center: { label: "مرکز" },
+  status: { label: "وضعیت" },
+};
+
+const RREQ_GROUPS = {
+  status: { label: "وضعیت", sql: "r.`status`" },
+  province: { label: "استان", sql: "p.`title`" },
+  month: { label: "ماه شمسی", dateCol: "r.`creationDate`" },
+};
+
+const RREQ_METRICS: Record<string, ColDef> = { count: { label: "تعداد درخواست‌ها" } };
+
+async function reportReserveRequests(ctx: Ctx) {
+  const where: any = {};
+  if (ctx.filters?.status) where.status = ctx.filters?.status;
+  if (ctx.fromDate || ctx.toDate) {
+    where.creationDate = {};
+    if (ctx.fromDate) where.creationDate.gte = ctx.fromDate;
+    if (ctx.toDate) where.creationDate.lte = ctx.toDate;
+  }
+  if (ctx.q) where.OR = [{ userName: { contains: ctx.q } }, { description: { contains: ctx.q } }];
+
+  const select = {
+    id: true, creationDate: true, userName: true, description: true, status: true,
+    provinceId: true, centerId: true,
+  } as const;
+
+  const nameMaps = async (rows: any[]) => {
+    const pids = [...new Set(rows.map((r: any) => r.provinceId).filter(Boolean))];
+    const cids = [...new Set(rows.map((r: any) => r.centerId).filter((x: number | null) => x != null))];
+    const [ps, cs] = await Promise.all([
+      pids.length ? db.province.findMany({ where: { id: { in: pids } }, select: { id: true, title: true } }) : [],
+      cids.length ? db.center.findMany({ where: { id: { in: cids } }, select: { id: true, title: true } }) : [],
+    ]);
+    return {
+      p: new Map(ps.map((x: any) => [x.id, x.title])),
+      c: new Map(cs.map((x: any) => [x.id, x.title])),
+    };
+  };
+
+  const mapR = (r: any, maps: { p: Map<number, string>; c: Map<number, string> }) => ({
+    ...r,
+    provinceId: undefined,
+    centerId: undefined,
+    province: r.provinceId ? maps.p.get(r.provinceId) ?? null : null,
+    center: r.centerId ? maps.c.get(r.centerId) ?? null : null,
+  });
+
+  if (ctx.mode === "summary") {
+    const parts: string[] = ["1=1"];
+    const args: unknown[] = [];
+    if (ctx.filters?.status) { parts.push("r.`status` = ?"); args.push(ctx.filters?.status); }
+    if (ctx.fromDate) { parts.push("r.`creationDate` >= ?"); args.push(ctx.fromDate); }
+    if (ctx.toDate) { parts.push("r.`creationDate` <= ?"); args.push(ctx.toDate); }
+    if (ctx.q) { parts.push("(r.`userName` LIKE ? OR r.`description` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    return summarizeSql(
+      ctx,
+      { from: "`ReferrsRequest` r", joins: " LEFT JOIN `Province` p ON r.`provinceId` = p.`id` LEFT JOIN `Centers` c ON r.`centerId` = c.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
+      { ...RREQ_GROUPS, center: { label: "مرکز", sql: "c.`title`" } },
+      RREQ_METRICS,
+    );
+  }
+
+  return detailResponse(
+    ctx, RREQ_COLUMNS,
+    async () => {
+      const rows = await db.referrRequest.findMany({ where, select, orderBy: { creationDate: "desc" }, take: SUMMARY_CAP });
+      const maps = await nameMaps(rows);
+      return rows.map((r) => mapR(r, maps));
+    },
+    async () => {
+      const [total, rows] = await Promise.all([
+        db.referrRequest.count({ where }),
+        db.referrRequest.findMany({ where, select, orderBy: { creationDate: "desc" }, skip: (ctx.page - 1) * ctx.pageSize, take: ctx.pageSize }),
+      ]);
+      const maps = await nameMaps(rows);
+      return { rows: rows.map((r) => mapR(r, maps)), total };
+    },
+    "report-reserve-requests",
+    "creationDate",
+  );
 }

@@ -24,6 +24,16 @@ export default function RootLayout({
           {children}
           <Toaster />
         </ThemeProvider>
+        {/*
+          نمودارهای BPMN (diagram-js) برای اندازه‌گیری متن از helper-svg سراسری استفاده می‌کنند؛
+          اگر خودش ساخته‌اش بدهد (۰×۰)، مرورگر Chrome عرض «منفی» برمی‌گرداند و لیبل‌ها جابه‌جا می‌شوند.
+          با ساختن پیشینی با اندازهٔ واقعی، اندازه‌گیری درست می‌شود.
+        */}
+        <svg
+          id="helper-svg"
+          style={{ position: "fixed", visibility: "hidden", pointerEvents: "none", width: 1000, height: 1000, top: 0, left: 0, direction: "ltr" }}
+          aria-hidden="true"
+        />
       </body>
     </html>
   );

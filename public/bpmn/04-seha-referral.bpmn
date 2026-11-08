@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  id="Defs_sehareferral"
+                  targetNamespace="http://raz.ir/bpmn">
+  <bpmn:process id="Process_sehareferral" isExecutable="false">
+    <bpmn:startEvent id="s" name="ارجاع از سامانهٔ سها" />     <bpmn:task id="recv" name="دریافت مشخصات و خدمت ارجاعی" />     <bpmn:exclusiveGateway id="g_ok" name="قابل پذیرش؟" />     <bpmn:task id="accept" name="پذیرش ارجاع و معرفی به مرکز" />     <bpmn:task id="assign" name="تعیین مشاور و برنامهٔ جلسات" />     <bpmn:task id="run" name="اجرای جلسات و ثبت گزارش" />     <bpmn:exclusiveGateway id="g_fin" name="تعداد جلسات تکمیل شد؟" />     <bpmn:task id="report" name="اعلام نتیجه و وضعیت به سها" />     <bpmn:task id="reject" name="ثبت دلیل عدم پذیرش" />     <bpmn:endEvent id="e_ok" name="ارجاع بسته شد" />     <bpmn:endEvent id="e_rej" name="ارجاع رد شد" />
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="s" targetRef="recv" />     <bpmn:sequenceFlow id="Flow_2" sourceRef="recv" targetRef="g_ok" />     <bpmn:sequenceFlow id="Flow_3" sourceRef="g_ok" targetRef="accept" name="بله" />     <bpmn:sequenceFlow id="Flow_4" sourceRef="g_ok" targetRef="reject" name="خیر" />     <bpmn:sequenceFlow id="Flow_5" sourceRef="reject" targetRef="e_rej" />     <bpmn:sequenceFlow id="Flow_6" sourceRef="accept" targetRef="assign" />     <bpmn:sequenceFlow id="Flow_7" sourceRef="assign" targetRef="run" />     <bpmn:sequenceFlow id="Flow_8" sourceRef="run" targetRef="g_fin" />     <bpmn:sequenceFlow id="Flow_9" sourceRef="g_fin" targetRef="run" name="خیر — ادامهٔ جلسات" />     <bpmn:sequenceFlow id="Flow_10" sourceRef="g_fin" targetRef="report" name="بله" />     <bpmn:sequenceFlow id="Flow_11" sourceRef="report" targetRef="e_ok" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_sehareferral">
+    <bpmndi:BPMNPlane id="Plane_sehareferral" bpmnElement="Process_sehareferral">
+        <bpmndi:BPMNShape id="Shape_s" bpmnElement="s">
+          <dc:Bounds x="120" y="240" width="36" height="36" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="83" y="282" width="110" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_recv" bpmnElement="recv">
+          <dc:Bounds x="300" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="304" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_g_ok" bpmnElement="g_ok">
+          <dc:Bounds x="480" y="240" width="50" height="50" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="455" y="298" width="100" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_accept" bpmnElement="accept">
+          <dc:Bounds x="660" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="664" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_assign" bpmnElement="assign">
+          <dc:Bounds x="840" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="844" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_run" bpmnElement="run">
+          <dc:Bounds x="1020" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1024" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_g_fin" bpmnElement="g_fin">
+          <dc:Bounds x="1200" y="240" width="50" height="50" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1175" y="298" width="100" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_report" bpmnElement="report">
+          <dc:Bounds x="1380" y="240" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1384" y="256" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_reject" bpmnElement="reject">
+          <dc:Bounds x="660" y="370" width="100" height="80" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="664" y="386" width="92" height="48" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_e_ok" bpmnElement="e_ok">
+          <dc:Bounds x="1560" y="240" width="36" height="36" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="1523" y="282" width="110" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNShape id="Shape_e_rej" bpmnElement="e_rej">
+          <dc:Bounds x="840" y="370" width="36" height="36" />
+          <bpmndi:BPMNLabel>
+            <dc:Bounds x="803" y="412" width="110" height="14" />
+          </bpmndi:BPMNLabel>
+        </bpmndi:BPMNShape>
+        <bpmndi:BPMNEdge id="Edge_1" bpmnElement="Flow_1">
+          <di:waypoint x="156" y="258" />           <di:waypoint x="228" y="258" />           <di:waypoint x="228" y="280" />           <di:waypoint x="300" y="280" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_2" bpmnElement="Flow_2">
+          <di:waypoint x="400" y="280" />           <di:waypoint x="440" y="280" />           <di:waypoint x="440" y="265" />           <di:waypoint x="480" y="265" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_3" bpmnElement="Flow_3">
+          <di:waypoint x="530" y="265" />           <di:waypoint x="595" y="265" />           <di:waypoint x="595" y="280" />           <di:waypoint x="660" y="280" />
+          <bpmndi:BPMNLabel><dc:Bounds x="555" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_4" bpmnElement="Flow_4">
+          <di:waypoint x="530" y="265" />           <di:waypoint x="595" y="265" />           <di:waypoint x="595" y="410" />           <di:waypoint x="660" y="410" />
+          <bpmndi:BPMNLabel><dc:Bounds x="555" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_5" bpmnElement="Flow_5">
+          <di:waypoint x="760" y="410" />           <di:waypoint x="800" y="410" />           <di:waypoint x="800" y="388" />           <di:waypoint x="840" y="388" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_6" bpmnElement="Flow_6">
+          <di:waypoint x="760" y="280" />           <di:waypoint x="840" y="280" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_7" bpmnElement="Flow_7">
+          <di:waypoint x="940" y="280" />           <di:waypoint x="1020" y="280" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_8" bpmnElement="Flow_8">
+          <di:waypoint x="1120" y="280" />           <di:waypoint x="1160" y="280" />           <di:waypoint x="1160" y="265" />           <di:waypoint x="1200" y="265" />
+          
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_9" bpmnElement="Flow_9">
+          <di:waypoint x="1250" y="265" />           <di:waypoint x="1135" y="265" />           <di:waypoint x="1135" y="280" />           <di:waypoint x="1020" y="280" />
+          <bpmndi:BPMNLabel><dc:Bounds x="1095" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_10" bpmnElement="Flow_10">
+          <di:waypoint x="1250" y="265" />           <di:waypoint x="1315" y="265" />           <di:waypoint x="1315" y="280" />           <di:waypoint x="1380" y="280" />
+          <bpmndi:BPMNLabel><dc:Bounds x="1275" y="245" width="80" height="14" /></bpmndi:BPMNLabel>
+        </bpmndi:BPMNEdge>         <bpmndi:BPMNEdge id="Edge_11" bpmnElement="Flow_11">
+          <di:waypoint x="1480" y="280" />           <di:waypoint x="1520" y="280" />           <di:waypoint x="1520" y="258" />           <di:waypoint x="1560" y="258" />
+          
+        </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

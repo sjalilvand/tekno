@@ -6,6 +6,7 @@ import { LoginView } from "@/views/login";
 import { DashboardView } from "@/views/dashboard";
 import { BiView } from "@/views/bi";
 import { ReportBuilderView } from "@/views/report-builder";
+import { ProcessesView } from "@/views/processes";
 import { EventsView } from "@/views/events";
 import { GroupEventsView } from "@/views/group-events";
 import { ReservesView } from "@/views/reserves";
@@ -88,6 +89,7 @@ function ShellWithRouter({
     switch (route) {
       case "bi": return <BiView />;
       case "reports": return <ReportBuilderView />;
+      case "processes": return <ProcessesView />;
       case "events": return <EventsView />;
       case "group-events": return <GroupEventsView />;
       case "reserves": return <ReservesView />;

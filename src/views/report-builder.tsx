@@ -1,6 +1,9 @@
 "use client";
-// گزارش‌ساز حرفه‌ای — انتخاب منبع داده، ستون‌ها، فیلترها، گروه‌بندی
-// خروجی: جدول تعاملی + CSV (سازگار با اکسل فارسی) + چاپ A4 + قالب‌های ذخیره‌شده
+// گزارش‌ساز حرفه‌ای — مطابق read_mysql/presets.py + گزارش‌ساز آزاد
+// • ۱۶ گزارش آمادهٔ مدیریتی در دسته‌بندی‌ها + ۱۲ منبع دادهٔ آزاد
+// • حالت جزئیات (صفحه‌بندی‌شده) و خلاصه (گروه‌بندی + تجمیع داخل دیتابیس)
+// • خروجی CSV سازگار با اکسل فارسی + اکسل XLSX راست‌به‌چپ + چاپ A4
+// • قالب‌های ذخیره‌شدهٔ شخصی
 import * as React from "react";
 import { PageHeader, SectionCard, LoadingView } from "@/components/shared";
 import { BarChartX } from "@/components/charts";
@@ -8,6 +11,7 @@ import { JalaliDatePicker } from "@/components/ui/jalali-date-picker";
 import { faNum, faMoney, jDate, jDateTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { BRAND } from "@/lib/brand";
+import { REPORT_PRESETS, ReportPreset } from "@/lib/report-presets";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,18 +19,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   CalendarCheck, Wallet, Users, CalendarClock, ArrowLeftRight, MessageSquareText,
   Play, Download, Printer, Save, FolderOpen, Trash2, FileBarChart2, X, Database, Info,
+  Siren, UserSquare2, ScrollText, Receipt, Target, Inbox, FileSpreadsheet, Wrench,
 } from "lucide-react";
 
 // ---------------- تعریف منابع گزارش ----------------
-type DatasetKey = "events" | "finance" | "users" | "reserves" | "referrals" | "sms";
+type DatasetKey = "events" | "finance" | "users" | "reserves" | "referrals" | "sms" | "ems" | "group-events" | "logs" | "taxes" | "budgets" | "reserve-requests";
 
-const DATASETS: { key: DatasetKey; label: string; desc: string; icon: React.ReactNode; statuses: string[]; hasFinance: boolean }[] = [
-  { key: "events", label: "جلسات مشاوره", desc: "همهٔ جلسات با وضعیت، مراجع، خدمت و مرکز", icon: <CalendarCheck className="h-4.5 w-4.5" />, statuses: ["تایید نهایی", "در انتظار پذیرش", "در انتظار تایید مدیر مرکز", "در انتظار تایید مسئول فنی", "در انتظار تایید نظارت حرفه‌ای", "در انتظار تایید ناظر استان", "رد شده", "ناتمام"], hasFinance: true },
-  { key: "finance", label: "مالی و تعرفه‌ها", desc: "تعرفه‌ها و سهم‌های مالی جلسات", icon: <Wallet className="h-4.5 w-4.5" />, statuses: ["تایید نهایی", "رد شده", "ناتمام"], hasFinance: true },
-  { key: "users", label: "کاربران", desc: "مشتریان، مشاوران و کارمندان", icon: <Users className="h-4.5 w-4.5" />, statuses: [], hasFinance: false },
-  { key: "reserves", label: "رزروها", desc: "رزروهای جلسات و وضعیت آن‌ها", icon: <CalendarClock className="h-4.5 w-4.5" />, statuses: [], hasFinance: false },
-  { key: "referrals", label: "ارجاعات سها", desc: "ارجاع‌های دریافتی از سامانهٔ سها", icon: <ArrowLeftRight className="h-4.5 w-4.5" />, statuses: ["در انتظار", "پذیرش‌شده", "ارجاع‌شده", "منقضی"], hasFinance: false },
-  { key: "sms", label: "پیامک‌ها", desc: "صف پیامک و وضعیت ارسال", icon: <MessageSquareText className="h-4.5 w-4.5" />, statuses: ["در صف", "ارسال شده", "ناموفق"], hasFinance: false },
+type DatasetDef = {
+  key: DatasetKey; label: string; desc: string; icon: React.ReactNode;
+  statuses: string[]; hasFinance?: boolean; hasCenter?: boolean; hasService?: boolean;
+  hasDone?: boolean; severities?: string[];
+};
+
+const DATASETS: DatasetDef[] = [
+  { key: "events", label: "جلسات مشاوره", desc: "همهٔ جلسات با وضعیت، مراجع، خدمت و مرکز", icon: <CalendarCheck className="h-4.5 w-4.5" />, statuses: ["تایید نهایی", "در انتظار پذیرش", "در انتظار تایید مدیر مرکز", "در انتظار تایید مسئول فنی", "در انتظار تایید نظارت حرفه‌ای", "در انتظار تایید ناظر استان", "رد شده", "ناتمام"], hasFinance: true, hasCenter: true, hasService: true, hasDone: true },
+  { key: "finance", label: "مالی و تعرفه‌ها", desc: "تعرفه‌ها و سهم‌های مالی جلسات", icon: <Wallet className="h-4.5 w-4.5" />, statuses: ["تایید نهایی", "رد شده", "ناتمام"], hasFinance: true, hasCenter: true, hasService: true },
+  { key: "group-events", label: "جلسات گروهی", desc: "جلسات گروهی با تعداد حاضران و موضوع", icon: <UserSquare2 className="h-4.5 w-4.5" />, statuses: ["تایید نهایی", "در انتظار تایید", "رد شده"], hasFinance: true, hasCenter: true, hasService: true, hasDone: true },
+  { key: "ems", label: "موارد حاد", desc: "موارد حاد با شدت خطر و وضعیت پرداخت", icon: <Siren className="h-4.5 w-4.5" />, statuses: [], severities: ["کم", "متوسط", "بالا"] },
+  { key: "users", label: "کاربران", desc: "مشتریان، مشاوران و کارمندان", icon: <Users className="h-4.5 w-4.5" />, statuses: [] },
+  { key: "reserves", label: "رزروها", desc: "رزروهای جلسات و وضعیت آن‌ها", icon: <CalendarClock className="h-4.5 w-4.5" />, statuses: [] },
+  { key: "reserve-requests", label: "درخواست‌های رزرو", desc: "درخواست‌های رزرو کاربران و بررسی آن‌ها", icon: <Inbox className="h-4.5 w-4.5" />, statuses: ["در انتظار بررسی", "تایید شده", "رد شده"] },
+  { key: "referrals", label: "ارجاعات سها", desc: "ارجاع‌های دریافتی از سامانهٔ سها", icon: <ArrowLeftRight className="h-4.5 w-4.5" />, statuses: ["در انتظار", "پذیرش‌شده", "ارجاع‌شده", "منقضی"] },
+  { key: "sms", label: "پیامک‌ها", desc: "صف پیامک و وضعیت ارسال", icon: <MessageSquareText className="h-4.5 w-4.5" />, statuses: ["در صف", "ارسال شده", "ناموفق"] },
+  { key: "logs", label: "لاگ فعالیت", desc: "رویدادهای سامانه با دسته و سطح", icon: <ScrollText className="h-4.5 w-4.5" />, statuses: [] },
+  { key: "taxes", label: "مالیات مشاوران", desc: "مالیات ماهانهٔ محاسبه‌شدهٔ مشاوران", icon: <Receipt className="h-4.5 w-4.5" />, statuses: [] },
+  { key: "budgets", label: "سهمیه‌های خدماتی", desc: "سقف، مصرف و درصد مصرف سهمیه‌ها", icon: <Target className="h-4.5 w-4.5" />, statuses: [] },
 ];
 
 type ReportResponse = {
@@ -42,24 +59,42 @@ type ReportResponse = {
 
 type SavedPreset = { name: string; config: RunConfig };
 
-type CoverageData = {
-  sources: { key: string; label: string; count: number; first: string | null; last: string | null }[];
-  checkedAt: string;
-};
-
 type RunConfig = {
   dataset: DatasetKey;
   mode: "detail" | "summary";
   columns: string[];
-  filters: { q: string; status: string; serviceId: string; centerId: string; from: string; to: string };
+  filters: { q: string; status: string; serviceId: string; centerId: string; from: string; to: string; severity: string; doneOnly: string };
   groupBy: string;
   metric: string;
   sortKey: string;
   sortDir: "asc" | "desc";
 };
 
-const EMPTY_FILTERS = { q: "", status: "", serviceId: "", centerId: "", from: "", to: "" };
+type CoverageData = {
+  sources: { key: string; label: string; count: number; first: string | null; last: string | null }[];
+  checkedAt: string;
+};
+
+const EMPTY_FILTERS = { q: "", status: "", serviceId: "", centerId: "", from: "", to: "", severity: "", doneOnly: "" };
 const PRESET_KEY = "raz-report-presets";
+
+// حالت پیش‌فرض هر منبع — ستون‌ها و مرتب‌سازی
+const DATASET_DEFAULTS: Record<DatasetKey, { columns: string[]; sortKey: string; groupBy: string; metric: string }> = {
+  events: { columns: ["startDate", "userName", "service", "center", "status", "userTariff"], sortKey: "startDate", groupBy: "status", metric: "count" },
+  finance: { columns: ["startDate", "userName", "service", "center", "userTariff", "acceptorFee", "centerFee"], sortKey: "startDate", groupBy: "month", metric: "sum:userTariff" },
+  "group-events": { columns: ["startDate", "topic", "groupTitle", "membersCount", "center", "adviser", "status"], sortKey: "startDate", groupBy: "status", metric: "count" },
+  ems: { columns: ["date", "userName", "province", "adviser", "emsType", "severity", "payStatus", "amount"], sortKey: "date", groupBy: "severity", metric: "count" },
+  users: { columns: ["nid", "name", "family", "mobile", "gender", "signupDate"], sortKey: "id", groupBy: "gender", metric: "count" },
+  reserves: { columns: ["date", "userName", "eventTrackingCode", "eventStatus"], sortKey: "date", groupBy: "month", metric: "count" },
+  "reserve-requests": { columns: ["creationDate", "userName", "province", "center", "status"], sortKey: "creationDate", groupBy: "status", metric: "count" },
+  referrals: { columns: ["refId", "creationDate", "userName", "service", "sessionsCount", "status"], sortKey: "id", groupBy: "status", metric: "count" },
+  sms: { columns: ["createTime", "number", "receiverName", "message", "status"], sortKey: "id", groupBy: "status", metric: "count" },
+  logs: { columns: ["timestamp", "userName", "category", "description", "level"], sortKey: "timestamp", groupBy: "category", metric: "count" },
+  taxes: { columns: ["userName", "nid", "year", "month", "taxAmount", "totalPayment"], sortKey: "createdAt", groupBy: "year", metric: "sum:taxAmount" },
+  budgets: { columns: ["title", "kind", "amount", "used", "reserved", "remained", "pct"], sortKey: "id", groupBy: "kind", metric: "sum:used" },
+};
+
+const PRESET_LABEL: Record<string, string> = Object.fromEntries(REPORT_PRESETS.map((p) => [p.key, p.title]));
 
 export function ReportBuilderView() {
   const meta = useQuery<any>(() => api("/api/meta"), []);
@@ -67,7 +102,7 @@ export function ReportBuilderView() {
 
   const [dataset, setDataset] = React.useState<DatasetKey>("events");
   const [mode, setMode] = React.useState<"detail" | "summary">("detail");
-  const [columns, setColumns] = React.useState<string[]>(["startDate", "userName", "service", "center", "status", "userTariff"]);
+  const [columns, setColumns] = React.useState<string[]>(DATASET_DEFAULTS.events.columns);
   const [filters, setFilters] = React.useState({ ...EMPTY_FILTERS });
   const [groupBy, setGroupBy] = React.useState("status");
   const [metric, setMetric] = React.useState("count");
@@ -82,6 +117,7 @@ export function ReportBuilderView() {
   const [presets, setPresets] = React.useState<SavedPreset[]>([]);
   const [presetName, setPresetName] = React.useState("");
   const [presetMenu, setPresetMenu] = React.useState(false);
+  const [activePreset, setActivePreset] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     try {
@@ -94,6 +130,20 @@ export function ReportBuilderView() {
   const groupKeys = result?.groupKeys ?? null;
   const metrics = result?.metrics ?? null;
 
+  const buildBody = (p: number, size: number) => ({
+    dataset, mode, columns,
+    filters: {
+      ...filters,
+      serviceId: filters.serviceId || undefined,
+      centerId: filters.centerId || undefined,
+      severity: filters.severity || undefined,
+      doneOnly: filters.doneOnly || undefined,
+    },
+    groupBy, metric,
+    sort: { key: sortKey, dir: sortDir },
+    page: p, pageSize: size,
+  });
+
   const run = async (p = 1) => {
     setRunning(true);
     setError(null);
@@ -101,19 +151,45 @@ export function ReportBuilderView() {
     try {
       const data = await api<ReportResponse>("/api/report", {
         method: "POST",
+        body: JSON.stringify(buildBody(p, pageSize)),
+      });
+      setResult(data);
+    } catch (e: any) {
+      setError(e?.message ?? "خطا در تولید گزارش");
+      setResult(null);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  // اجرای یک پیکربندی کامل (برای گزارش‌های آماده)
+  const runConfig = async (cfg: RunConfig, presetKey: string | null) => {
+    setRunning(true);
+    setError(null);
+    setActivePreset(presetKey);
+    setDataset(cfg.dataset); setMode(cfg.mode); setColumns(cfg.columns);
+    setFilters({ ...EMPTY_FILTERS, ...cfg.filters });
+    setGroupBy(cfg.groupBy); setMetric(cfg.metric);
+    setSortKey(cfg.sortKey); setSortDir(cfg.sortDir);
+    try {
+      const data = await api<ReportResponse>("/api/report", {
+        method: "POST",
         body: JSON.stringify({
-          dataset, mode, columns,
+          dataset: cfg.dataset, mode: cfg.mode, columns: cfg.columns,
           filters: {
-            ...filters,
-            serviceId: filters.serviceId || undefined,
-            centerId: filters.centerId || undefined,
+            ...cfg.filters,
+            serviceId: cfg.filters.serviceId || undefined,
+            centerId: cfg.filters.centerId || undefined,
+            severity: cfg.filters.severity || undefined,
+            doneOnly: cfg.filters.doneOnly || undefined,
           },
-          groupBy, metric,
-          sort: { key: sortKey, dir: sortDir },
-          page: p, pageSize,
+          groupBy: cfg.groupBy, metric: cfg.metric,
+          sort: { key: cfg.sortKey, dir: cfg.sortDir },
+          page: 1, pageSize,
         }),
       });
       setResult(data);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
       setError(e?.message ?? "خطا در تولید گزارش");
       setResult(null);
@@ -126,19 +202,41 @@ export function ReportBuilderView() {
     setDataset(key);
     setResult(null);
     setError(null);
+    setActivePreset(null);
     setPage(1);
-    const d = DATASETS.find((x) => x.key === key)!;
-    if (key === "users") { setColumns(["nid", "name", "family", "mobile", "gender", "signupDate"]); setSortKey("id"); setGroupBy("gender"); }
-    else if (key === "reserves") { setColumns(["date", "userName", "eventTrackingCode", "eventStatus"]); setSortKey("date"); setGroupBy("month"); }
-    else if (key === "referrals") { setColumns(["refId", "creationDate", "userName", "service", "sessionsCount", "status"]); setSortKey("id"); setGroupBy("status"); }
-    else if (key === "sms") { setColumns(["createTime", "number", "receiverName", "message", "status"]); setSortKey("id"); setGroupBy("status"); }
-    else if (key === "finance") { setColumns(["startDate", "userName", "service", "center", "userTariff", "acceptorFee", "centerFee"]); setSortKey("startDate"); setGroupBy("month"); setMetric("sum:userTariff"); }
-    else { setColumns(["startDate", "userName", "service", "center", "status", "userTariff"]); setSortKey("startDate"); setGroupBy("status"); setMetric("count"); }
-    if (!d.statuses.includes(filters.status)) setFilters((f) => ({ ...f, status: "" }));
+    const d = DATASET_DEFAULTS[key];
+    setColumns(d.columns);
+    setSortKey(d.sortKey);
+    setGroupBy(d.groupBy);
+    setMetric(d.metric);
   };
 
-  // ---------------- CSV ----------------
-  const exportCsv = () => {
+  // ---------------- خروجی فایل از سرور (همهٔ ردیف‌ها) ----------------
+  const exportFile = async (format: "csv" | "xlsx") => {
+    setError(null);
+    try {
+      const res = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...buildBody(page, pageSize), format }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "خطا در تولید فایل خروجی");
+      }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${PRESET_LABEL[activePreset ?? ""] ?? `report-${dataset}`}-${new Date().toISOString().slice(0, 10)}.${format}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e: any) {
+      setError(e?.message ?? "خطا در تولید فایل خروجی");
+    }
+  };
+
+  // خروجی CSV سمت کلاینت (سریع، از دادهٔ صفحهٔ فعلی)
+  const exportCsvClient = () => {
     if (!result?.rows?.length) return;
     let header: string[], lines: string[];
     if (mode === "detail" && colDefs) {
@@ -148,8 +246,7 @@ export function ReportBuilderView() {
       header = [result.summary?.groupBy.label ?? "گروه", result.summary?.metric.label ?? "مقدار"];
       lines = result.rows.map((r) => `${csvCell(r.name)},${csvCell(r.value)}`);
     }
-    const bom = "\uFEFF";
-    const csv = bom + [header.map(csvCell).join(","), ...lines].join("\r\n");
+    const csv = "\uFEFF" + [header.map(csvCell).join(","), ...lines].join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -171,12 +268,29 @@ export function ReportBuilderView() {
     const c = p.config;
     setDataset(c.dataset); setMode(c.mode); setColumns(c.columns); setFilters({ ...EMPTY_FILTERS, ...c.filters });
     setGroupBy(c.groupBy); setMetric(c.metric); setSortKey(c.sortKey); setSortDir(c.sortDir);
-    setResult(null); setPresetMenu(false);
+    setResult(null); setPresetMenu(false); setActivePreset(null);
   };
   const deletePreset = (p: SavedPreset) => {
     const next = presets.filter((x) => x.name !== p.name);
     setPresets(next);
     localStorage.setItem(PRESET_KEY, JSON.stringify(next));
+  };
+
+  // ---------------- گزارش‌های آماده — گروه‌بندی دسته‌ای ----------------
+  const presetCategories = Array.from(new Set(REPORT_PRESETS.map((p) => p.category)));
+
+  const applyPreset = (p: ReportPreset) => {
+    const cfg: RunConfig = {
+      dataset: p.config.dataset as DatasetKey,
+      mode: p.config.mode,
+      columns: p.config.columns,
+      filters: { ...EMPTY_FILTERS, ...(p.config.filters as any) },
+      groupBy: p.config.groupBy ?? "",
+      metric: p.config.metric ?? "count",
+      sortKey: p.config.columns[0] ?? "id",
+      sortDir: "desc",
+    };
+    runConfig(cfg, p.key);
   };
 
   const totalPages = result?.page && result?.pageSize ? Math.ceil((result.total ?? 0) / result.pageSize) : 1;
@@ -185,7 +299,7 @@ export function ReportBuilderView() {
     <div className="space-y-6">
       <PageHeader
         title="گزارش‌ساز حرفه‌ای"
-        subtitle="منبع داده، ستون‌ها، فیلترها و گروه‌بندی را انتخاب کنید — خروجی CSV و چاپ A4"
+        subtitle="۱۶ گزارش آمادهٔ مدیریتی + گزارش‌ساز آزاد با فیلتر، گروه‌بندی و خروجی CSV/اکسل"
         icon={<FileBarChart2 className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2 no-print">
@@ -220,8 +334,41 @@ export function ReportBuilderView() {
         }
       />
 
+      {/* ۰) گزارش‌های آمادهٔ مدیریتی */}
+      <SectionCard
+        title="گزارش‌های آمادهٔ مدیریتی"
+        subtitle="۱۶ گزارش مطابق صفحات سامانهٔ اصلی — با یک کلیک اجرا و بعد در گزارش‌ساز آزاد قابل تغییر است"
+        bodyClass="p-4"
+      >
+        <div className="space-y-3">
+          {presetCategories.map((cat) => (
+            <div key={cat}>
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-extrabold text-muted-foreground">
+                <Wrench className="h-3 w-3" /> {cat}
+              </p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {REPORT_PRESETS.filter((p) => p.category === cat).map((p) => (
+                  <button
+                    key={p.key}
+                    onClick={() => applyPreset(p)}
+                    className={`group flex items-start gap-2.5 rounded-xl border p-3 text-right transition-all ${activePreset === p.key ? "border-ring bg-accent shadow-sm" : "bg-card hover:border-ring/60 hover:shadow-sm"}`}
+                  >
+                    <span className="mt-0.5 text-lg leading-none">{p.icon}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-bold">{p.title}</span>
+                      <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">{p.desc}</span>
+                    </span>
+                    <Play className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-primary" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
       {/* ۱) منبع داده */}
-      <SectionCard title="۱) منبع داده" bodyClass="p-4">
+      <SectionCard title="گزارش‌ساز آزاد — منبع داده" bodyClass="p-4">
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
           {DATASETS.map((d) => {
             const cov = coverage.data?.sources.find((s) => s.key === d.key);
@@ -229,9 +376,9 @@ export function ReportBuilderView() {
               <button
                 key={d.key}
                 onClick={() => changeDataset(d.key)}
-                className={`rounded-xl border p-3 text-right transition-all ${dataset === d.key ? "border-ring bg-accent shadow-sm" : "bg-card hover:border-ring/60"}`}
+                className={`rounded-xl border p-3 text-right transition-all ${dataset === d.key && !activePreset ? "border-ring bg-accent shadow-sm" : "bg-card hover:border-ring/60"}`}
               >
-                <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${dataset === d.key ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${dataset === d.key && !activePreset ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                   {d.icon}
                 </span>
                 <p className="mt-2 text-xs font-bold">{d.label}</p>
@@ -247,7 +394,7 @@ export function ReportBuilderView() {
       </SectionCard>
 
       {/* ۲) فیلترها */}
-      <SectionCard title="۲) فیلترها" bodyClass="p-4">
+      <SectionCard title="فیلترها" bodyClass="p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1">
             <Label className="text-[11px]">جستجو</Label>
@@ -265,7 +412,32 @@ export function ReportBuilderView() {
               </Select>
             </div>
           )}
-          {ds.hasFinance && (
+          {ds.severities && (
+            <div className="space-y-1">
+              <Label className="text-[11px]">شدت خطر</Label>
+              <Select value={filters.severity || "all"} onValueChange={(v) => setFilters((f) => ({ ...f, severity: v === "all" ? "" : v }))}>
+                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">همه</SelectItem>
+                  {ds.severities.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {ds.hasDone && (
+            <div className="space-y-1">
+              <Label className="text-[11px]">وضعیت جلسه</Label>
+              <Select value={filters.doneOnly || "all"} onValueChange={(v) => setFilters((f) => ({ ...f, doneOnly: v === "all" ? "" : v }))}>
+                <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">همه</SelectItem>
+                  <SelectItem value="1">انجام‌شده (پایان‌یافته)</SelectItem>
+                  <SelectItem value="0">ناتمام</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {ds.hasService && (
             <div className="space-y-1">
               <Label className="text-[11px]">خدمت</Label>
               <Select value={filters.serviceId || "all"} onValueChange={(v) => setFilters((f) => ({ ...f, serviceId: v === "all" ? "" : v }))}>
@@ -277,7 +449,7 @@ export function ReportBuilderView() {
               </Select>
             </div>
           )}
-          {ds.hasFinance && (
+          {ds.hasCenter && (
             <div className="space-y-1">
               <Label className="text-[11px]">مرکز</Label>
               <Select value={filters.centerId || "all"} onValueChange={(v) => setFilters((f) => ({ ...f, centerId: v === "all" ? "" : v }))}>
@@ -304,7 +476,7 @@ export function ReportBuilderView() {
                 <Select value={groupBy} onValueChange={setGroupBy}>
                   <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {Object.entries(groupKeys ?? {}).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+                    {Object.entries(groupKeys ?? DEFAULT_GROUP_LABELS[dataset] ?? {}).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -313,7 +485,7 @@ export function ReportBuilderView() {
                 <Select value={metric} onValueChange={setMetric}>
                   <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {Object.entries(metrics ?? {}).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+                    {Object.entries(metrics ?? DEFAULT_METRIC_LABELS[dataset] ?? {}).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -351,7 +523,7 @@ export function ReportBuilderView() {
               <button onClick={() => setMode("detail")} className={`rounded-md px-3 py-1.5 text-xs font-bold ${mode === "detail" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>جزئیات</button>
               <button onClick={() => setMode("summary")} className={`rounded-md px-3 py-1.5 text-xs font-bold ${mode === "summary" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>خلاصه (گروه‌بندی)</button>
             </div>
-            {mode === "summary" && !groupKeys && <span className="text-[10.5px] text-muted-foreground">برای انتخاب گروه‌بندی، ابتدا یک‌بار گزارش را اجرا کنید</span>}
+            {mode === "summary" && !groupKeys && <span className="text-[10.5px] text-muted-foreground">گروه‌بندی پیش‌فرض منبع داده اعمال شده — پس از اجرا دقیق‌تر می‌شود</span>}
           </div>
 
           {mode === "detail" && colDefs && (
@@ -376,21 +548,27 @@ export function ReportBuilderView() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button className="gap-1.5" onClick={() => run(1)} disabled={running}>
+          <Button className="gap-1.5" onClick={() => { setActivePreset(null); run(1); }} disabled={running}>
             {running ? <LoadingSpinner /> : <Play className="h-4 w-4" />}
             اجرای گزارش
           </Button>
           {result && (
             <>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={exportCsv}>
-                <Download className="h-3.5 w-3.5" /> خروجی CSV
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportFile("xlsx")}>
+                <FileSpreadsheet className="h-3.5 w-3.5" /> اکسل (XLSX)
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={exportCsvClient}>
+                <Download className="h-3.5 w-3.5" /> CSV این صفحه
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportFile("csv")}>
+                <Download className="h-3.5 w-3.5" /> CSV کامل
               </Button>
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => window.print()}>
                 <Printer className="h-3.5 w-3.5" /> چاپ / PDF
               </Button>
             </>
           )}
-          {filters !== EMPTY_FILTERS && (filters.q || filters.status || filters.from || filters.to) && (
+          {(filters.q || filters.status || filters.from || filters.to || filters.severity || filters.doneOnly) && (
             <Button variant="ghost" size="sm" className="gap-1 text-xs text-muted-foreground" onClick={() => setFilters({ ...EMPTY_FILTERS })}>
               <X className="h-3.5 w-3.5" /> پاک‌کردن فیلترها
             </Button>
@@ -409,7 +587,7 @@ export function ReportBuilderView() {
       {result && !error && (
         <div className="print-area">
           <div className="mb-3 hidden text-center print:block">
-            <h2 className="text-lg font-black">{ds.label} — {BRAND.name}</h2>
+            <h2 className="text-lg font-black">{PRESET_LABEL[activePreset ?? ""] ?? ds.label} — {BRAND.name}</h2>
             <p className="text-xs text-gray-500">تاریخ گزارش: {jDateTime(new Date())} — تعداد رکورد: {faNum(result.total)}</p>
           </div>
           {mode === "summary" && result.summary && (
@@ -417,8 +595,8 @@ export function ReportBuilderView() {
               title={`${result.summary.metric.label} بر اساس ${result.summary.groupBy.label}`}
               subtitle={`${faNum(result.summary.sourceRows)} ردیف مبدأ${result.summary.capped ? " (نمایش سقف مجاز)" : ""}`}
               actions={
-                <Button variant="outline" size="sm" className="gap-1.5 no-print" onClick={exportCsv}>
-                  <Download className="h-3.5 w-3.5" /> CSV
+                <Button variant="outline" size="sm" className="gap-1.5 no-print" onClick={() => exportFile("xlsx")}>
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> اکسل
                 </Button>
               }
             >
@@ -434,7 +612,14 @@ export function ReportBuilderView() {
             {mode === "detail" && totalPages > 1 && (
               <div className="flex items-center justify-between border-t px-4 py-3">
                 <span className="text-xs text-muted-foreground">
-                  صفحه {faNum(result.page ?? 1)} از {faNum(totalPages)}
+                  صفحه {faNum(result.page ?? 1)} از {faNum(totalPages)} — اندازهٔ صفحه:
+                  <select
+                    className="mx-1 rounded border bg-card px-1 py-0.5 text-xs"
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                  >
+                    {[10, 20, 50, 100].map((s) => <option key={s} value={s}>{faNum(s)}</option>)}
+                  </select>
                 </span>
                 <div className="flex gap-1.5 no-print">
                   <Button variant="outline" size="sm" disabled={(result.page ?? 1) <= 1} onClick={() => run((result.page ?? 1) - 1)}>قبلی</Button>
@@ -448,6 +633,37 @@ export function ReportBuilderView() {
     </div>
   );
 }
+
+// برچسب‌های گروه‌بندی/شاخص پیش‌فرض هر منبع — تا قبل از اولین اجرا هم منو پر باشد
+const DEFAULT_GROUP_LABELS: Record<DatasetKey, Record<string, { label: string }> | undefined> = {
+  events: { status: { label: "وضعیت" }, service: { label: "خدمت" }, center: { label: "مرکز" }, adviser: { label: "مشاور" }, month: { label: "ماه شمسی" } },
+  finance: { status: { label: "وضعیت" }, service: { label: "خدمت" }, center: { label: "مرکز" }, month: { label: "ماه شمسی" } },
+  "group-events": { status: { label: "وضعیت" }, center: { label: "مرکز" }, adviser: { label: "مشاور" }, month: { label: "ماه شمسی" } },
+  ems: { severity: { label: "شدت خطر" }, payStatus: { label: "وضعیت پرداخت" }, month: { label: "ماه شمسی" } },
+  users: { gender: { label: "جنسیت" }, blocked: { label: "وضعیت مسدودی" }, month: { label: "ماه عضویت" } },
+  reserves: { eventStatus: { label: "وضعیت جلسه" }, month: { label: "ماه شمسی" } },
+  "reserve-requests": { status: { label: "وضعیت" }, province: { label: "استان" }, center: { label: "مرکز" }, month: { label: "ماه شمسی" } },
+  referrals: { status: { label: "وضعیت" }, service: { label: "خدمت" }, month: { label: "ماه شمسی" } },
+  sms: { status: { label: "وضعیت" }, month: { label: "ماه شمسی" } },
+  logs: { category: { label: "دستهٔ رویداد" }, level: { label: "سطح" }, month: { label: "ماه شمسی" } },
+  taxes: { year: { label: "سال" }, month: { label: "ماه" }, user: { label: "مشاور" } },
+  budgets: { kind: { label: "نوع خدمت" }, month: { label: "ماه شروع" } },
+};
+
+const DEFAULT_METRIC_LABELS: Record<DatasetKey, Record<string, { label: string }> | undefined> = {
+  events: { count: { label: "تعداد جلسات" }, "sum:userTariff": { label: "جمع تعرفه (ریال)" }, "sum:acceptorFee": { label: "جمع حق مشاور (ریال)" }, "avg:userTariff": { label: "میانگین تعرفه (ریال)" } },
+  finance: { count: { label: "تعداد جلسات" }, "sum:userTariff": { label: "جمع تعرفه (ریال)" }, "sum:acceptorFee": { label: "جمع حق مشاور (ریال)" }, "sum:centerFee": { label: "جمع سهم مرکز (ریال)" }, "sum:adminFee": { label: "جمع سهم سامانه (ریال)" } },
+  "group-events": { count: { label: "تعداد جلسات" }, "sum:userTariff": { label: "جمع تعرفه (ریال)" }, "sum:acceptorFee": { label: "جمع حق مشاور (ریال)" } },
+  ems: { count: { label: "تعداد موارد" }, "sum:hadPaymentAmount": { label: "جمع مبلغ پرداخت (ریال)" } },
+  users: { count: { label: "تعداد کاربران" } },
+  reserves: { count: { label: "تعداد رزروها" } },
+  "reserve-requests": { count: { label: "تعداد درخواست‌ها" } },
+  referrals: { count: { label: "تعداد ارجاعات" }, "sum:sessionsCount": { label: "جمع جلسات پیش‌بینی‌شده" } },
+  sms: { count: { label: "تعداد پیامک" } },
+  logs: { count: { label: "تعداد رویدادها" } },
+  taxes: { count: { label: "تعداد رکورد" }, "sum:taxAmount": { label: "جمع مالیات (ریال)" }, "sum:totalPayment": { label: "جمع پرداخت (ریال)" } },
+  budgets: { count: { label: "تعداد سهمیه" }, "sum:amount": { label: "جمع سقف" }, "sum:used": { label: "جمع مصرف" } },
+};
 
 // ---------------- جدول نتیجه ----------------
 function ResultTable({ result, mode, columns }: { result: ReportResponse; mode: "detail" | "summary"; columns: string[] }) {
@@ -480,7 +696,7 @@ function ResultTable({ result, mode, columns }: { result: ReportResponse; mode: 
               return (
                 <tr key={r.name} className="border-b border-border/60 last:border-0">
                   <td className="px-4 py-2.5 text-xs font-semibold">{r.name}</td>
-                  <td className="px-4 py-2.5 text-xs tabular-nums font-bold">{faMoney(r.value)}</td>
+                  <td className="px-4 py-2.5 text-xs tabular-nums font-bold">{faNum(Number(r.value))}</td>
                   <td className="px-4 py-2.5 text-xs tabular-nums text-muted-foreground">{faNum(Math.round((r.value / total) * 100))}٪</td>
                 </tr>
               );
