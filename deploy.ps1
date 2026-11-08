@@ -1,5 +1,7 @@
 ﻿# =====================================================================
-#  سامانه راه زندگی — استقرار خودکار روی ویندوز (نسخه ۵.۲)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۵.۳)
+#  تغییرات ۵.۳: توقف نمونهٔ در حال اجرا «قبل از build» — رفع خطای
+#  EPERM: unlink query_engine-windows.dll.node (قفل فایل توسط اجرای قبلی)
 #  تغییرات ۵.۲: اجرای اسکریپت‌های TS با خود Node (بدون دانلود tsx)،
 #  جلوگیری از حذف وابستگی‌های dev توسط npm (نشتی NODE_ENV) و --include=dev
 # ---------------------------------------------------------------------
@@ -296,6 +298,18 @@ function Invoke-Build {
   if ($SkipBuild) { Write-Warn2 "ساخت رد شد (-SkipBuild)"; return }
   Write-Step "ساخت نسخهٔ تولیدی (next build)"
   Push-Location $InstallDir
+  # پاکسازی .next قدیمی با چند بار تلاش — تا مطمئن شویم قفلی باقی نمانده
+  if (Test-Path ".next") {
+    $cleaned = $false
+    foreach ($i in 1..3) {
+      try { Remove-Item -Recurse -Force ".next" -ErrorAction Stop; $cleaned = $true; break }
+      catch { Start-Sleep -Seconds 2 }
+    }
+    if (-not $cleaned) {
+      Write-Warn2 "پوشهٔ .next قدیمی کامل پاک نشد"
+      Write-Warn2 "اگر خطای EPERM دیدید: Get-Process node | Stop-Process -Force و سپس اجرای مجدد"
+    }
+  }
   Invoke-Native { npx next build 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
   if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "ساخت پروژه ناموفق بود" }
   Invoke-Native { node scripts/copy-standalone.mjs | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
@@ -345,10 +359,39 @@ function Start-App {
 }
 
 function Stop-App {
-  Write-Step "توقف سامانه"
+  param([switch]$Quiet)
+  # خاموش کردن هر نمونهٔ در حال اجرا — قبل از build الزامی است وگرنه
+  # next build نمی‌تواند .next قدیمی را پاک کند:
+  # EPERM: unlink ...query_engine-windows.dll.node (فایل قفل‌شده توسط اجرای قبلی)
+  if (-not $Quiet) { Write-Step "توقف سامانه" }
+  $stopped = @()
   $p = Get-AppPid
-  if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue; Write-Ok "فرایند $p متوقف شد" }
-  else { Write-Warn2 "سامانه در حال اجرا نیست" }
+  if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue; $stopped += $p }
+  # هر فرایند node دیگری که از پوشهٔ سامانه اجرا شده باشد هم بسته شود
+  # (ممکن است PID در app.pid ثبت نشده باشد اما قفل DLL را نگه داشته باشد)
+  try {
+    $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
+    foreach ($proc in $procs) {
+      if ($proc.CommandLine -and ($proc.CommandLine -like "*$InstallDir*") -and ($stopped -notcontains $proc.ProcessId)) {
+        Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+        $stopped += $proc.ProcessId
+      }
+    }
+  } catch {}
+  if ($stopped.Count -eq 0) {
+    if (-not $Quiet) { Write-Warn2 "سامانه در حال اجرا نیست" }
+    return $false
+  }
+  # صبر تا آزاد شدن پورت و قفل فایل‌ها (حداکثر ~۱۰ ثانیه)
+  foreach ($i in 1..10) {
+    $still = $null
+    try { $still = Get-NetTCPConnection -LocalPort $AppPort -State Listen -ErrorAction SilentlyContinue } catch {}
+    if (-not $still) { break }
+    Start-Sleep -Seconds 1
+  }
+  Start-Sleep -Milliseconds 500
+  if (-not $Quiet) { Write-Ok ("فرایند متوقف شد (PID " + ($stopped -join ", ") + ")") }
+  return $true
 }
 
 function Show-Status {
@@ -398,13 +441,13 @@ switch ($Mode) {
     Invoke-PrismaSetup
     if ($ImportSqlite) { Invoke-DataImport }
     Invoke-SeedAdmin
+    Stop-App -Quiet   # آزادسازی قفل فایل‌های .next پیش از build (رفع EPERM)
     Invoke-Build
-    Stop-App
     Start-App
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — سامانه راه زندگی نسخهٔ ۵.۱" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۵.۳" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {
@@ -417,8 +460,8 @@ switch ($Mode) {
     Install-Dependencies
     Invoke-PrismaSetup
     Invoke-SeedAdmin
+    Stop-App -Quiet   # آزادسازی قفل فایل‌های .next پیش از build (رفع EPERM)
     Invoke-Build
-    Stop-App
     Start-App
   }
   "start"   { Start-App }
