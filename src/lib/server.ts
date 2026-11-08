@@ -9,12 +9,40 @@ export function hashPassword(password: string): string {
   return `${salt}:${hash}`;
 }
 
-export function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(":");
-  if (!salt || !hash) return false;
-  const candidate = scryptSync(password, salt, 32);
-  const expected = Buffer.from(hash, "hex");
-  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+/** آیا رشتهٔ ذخیره‌شده قالب جدید سامانه (scrypt با نمک) است؟ */
+export function isScryptHash(stored: string | null | undefined): boolean {
+  return typeof stored === "string" && /^[0-9a-f]{32}:[0-9a-f]{64}$/i.test(stored.trim());
+}
+
+/** آیا هش ذخیره‌شده از سامانهٔ قدیمی PHP است؟ (هر چیزی غیر از قالب scrypt) */
+export function isLegacyHash(stored: string | null | undefined): boolean {
+  return Boolean(stored) && !isScryptHash(stored);
+}
+
+/**
+ * بررسی رمز عبور با پشتیبانی از هش‌های قدیمی سامانهٔ PHP
+ * (مهاجرت تدریجی): md5 / sha1 / sha256 (هگز) و در نهایت متن ساده.
+ * قالب جدید: scrypt به شکل «salt:hash»
+ */
+export function verifyPassword(password: string, stored: string | null | undefined): boolean {
+  if (!stored) return false;
+  const s = String(stored).trim();
+  const p = String(password);
+  if (isScryptHash(s)) {
+    const [salt, hash] = s.split(":");
+    try {
+      const candidate = scryptSync(p, salt, 32);
+      const expected = Buffer.from(hash, "hex");
+      return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+    } catch {
+      return false;
+    }
+  }
+  // ---------- قالب‌های قدیمی (مهاجرت از PHP) ----------
+  if (/^[0-9a-f]{32}$/i.test(s)) return s.toLowerCase() === createHash("md5").update(p).digest("hex");
+  if (/^[0-9a-f]{40}$/i.test(s)) return s.toLowerCase() === createHash("sha1").update(p).digest("hex");
+  if (/^[0-9a-f]{64}$/i.test(s)) return s.toLowerCase() === createHash("sha256").update(p).digest("hex");
+  return s === p; // برخی نسخه‌های قدیمی رمز را متن ساده نگه می‌داشتند
 }
 
 const SESSION_COOKIE = "rz_session";

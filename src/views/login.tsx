@@ -8,8 +8,8 @@ import { Label } from "@/components/ui/label";
 
 const DEMO = [
   { label: "مدیر سیستم", username: "admin" },
-  { label: "مدیر کلینیک", username: "1210000016" },
-  { label: "مشاور", username: "1210000032" },
+  { label: "مدیر کلینیک", username: "manager" },
+  { label: "مشاور", username: "consultant" },
 ];
 
 export function LoginView() {

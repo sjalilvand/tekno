@@ -49,7 +49,8 @@ FLUSH PRIVILEGES;
 3. ساخت `.env` با `DATABASE_URL` مخصوص MySQL (نسخهٔ قبلی پشتیبان می‌شود)
 4. **اتصال به MySQL واقعی:** `prisma db push --schema prisma/schema.mysql.prisma`
 5. انتقال کامل پشتیبان `app.sqlite` (حدود ۱.۵ گیگابایت) به MySQL
-6. `next build` و اجرای سامانه روی پورت ۳۰۰۰ + بررسی سلامت
+6. **ایجاد حساب‌های مدیریتی:** `admin` / `manager` / `consultant` با رمز `123456` (اگر کاربری همنام از داده‌های قدیمی باشد، فقط رمزش بازنشانی می‌شود)
+7. `next build` و اجرای سامانه روی پورت ۳۰۰۰ + بررسی سلامت
 
 سایر حالت‌ها:
 
@@ -77,6 +78,8 @@ npm run db:push:mysql        # prisma db push --schema prisma/schema.mysql.prism
 
 npm run db:import:mysql -- --source "D:\Projects\rahe_zendegi\data\app.sqlite" --mysql "mysql://rzuser:رمز@localhost:3306/rahe_zendegi" --mode truncate --resume
 
+npm run seed:admin           # ساخت حساب‌های admin / manager / consultant با رمز 123456
+
 npm run build
 npm run start                # http://localhost:3000
 ```
@@ -98,7 +101,13 @@ npm run start                # http://localhost:3000
 npm run db:import:mysql -- --source "D:\...\app.sqlite" --dry-run
 ```
 
-## ۶) اجرای خودکار صف پیامک
+## ۶) حساب‌های ورود و رمزهای قدیمی (مهاجرت تدریجی)
+
+- بعد از هر استقرار/انتقال داده، سه حساب مدیریتی با رمز `123456` تضمین می‌شوند: `admin`، `manager`، `consultant`. اگر کاربری با همین نام کاربری از داده‌های قدیمی وجود داشته باشد فقط رمزش بازنشانی می‌شود و بقیهٔ مشخصات دست‌نخورده می‌ماند.
+- رمز کاربران قدیمی (منتقل‌شده از PHP) هم کار می‌کند: سامانه علاوه بر قالب جدید `scrypt`، هش‌های قدیمی `md5`، `sha1`، `sha256` (هگز) و متن ساده را می‌شناسد و **در اولین ورود موفق، رمز همان لحظه به قالب امن scrypt ارتقا می‌یابد** (مهاجرت تدریجی بدون هیچ تغییری برای کاربر).
+- اگر سامانهٔ قدیمی PHP قالب دیگری (مثلاً md5 با نمک ثابت) استفاده می‌کرد، فقط کافیست به `verifyPassword` در `src/lib/server.ts` یک شرط اضافه شود.
+
+## ۷) اجرای خودکار صف پیامک
 
 پنل «یکپارچه‌سازی‌ها» → «پیامک واقعی» را پیکربندی و فعال کنید، سپس برای ارسال خودکار صف، یک وظیفه در Task Scheduler بسازید:
 
@@ -109,10 +118,12 @@ $trg = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-Ti
 Register-ScheduledTask -TaskName "RZ-SmsQueue" -Action $act -Trigger $trg -Force
 ```
 
-## ۷) رفع اشکال
+## ۸) رفع اشکال
 
 | مشکل | راه‌حل |
 |---|---|
+| ورود با admin/123456 نمی‌شود | `npm run seed:admin` را در پوشهٔ سامانه اجرا کنید و سرویس را ری‌استارت نکنید (لازم نیست)؛ اگر بازهم نشد، `DATABASE_URL` در `.env` را با دیتابیس فعلی مقایسه کنید. |
+| MySQL در XAMPP بالا نمی‌آید (پورت 3306 اشغال است) | عادی است — سرویس `MySQL Server 8.x` ویندوز خودش روی 3306 فعال است و همان استفاده می‌شود؛ MySQL داخل XAMPP را Start نکنید. |
 | `prisma db push` خطای اتصال | رمز/کاربر MySQL و فعال بودن سرویس `mysql80` را بررسی کنید؛ رمز داخل `.env` باید URL-encode باشد (مثلاً `@` → `%40`). |
 | «دیتابیس وجود ندارد» | مرحلهٔ ۲ را اجرا کنید. |
 | انتقال داده متوقف شد | خطا در `import_status.json` ثبت شده؛ بعد از رفع، همان دستور را با `--resume` ادامه دهید. |

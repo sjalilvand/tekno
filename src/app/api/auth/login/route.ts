@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { verifyPassword, createSession, sessionCookieOptions, SESSION_COOKIE_NAME, safeJson } from "@/lib/server";
+import { verifyPassword, isLegacyHash, hashPassword, createSession, sessionCookieOptions, SESSION_COOKIE_NAME, safeJson } from "@/lib/server";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,6 +19,10 @@ export async function POST(req: NextRequest) {
     }
     if (user.blocked) {
       return Response.json({ error: "حساب کاربری شما مسدود شده است" }, { status: 403 });
+    }
+    // مهاجرت تدریجی: اگر رمز با هش قدیمی PHP درست بود، بی‌درنگ به قالب امن scrypt ارتقا می‌یابد
+    if (isLegacyHash(user.passwordHash)) {
+      await db.user.update({ where: { id: user.id }, data: { passwordHash: hashPassword(password) } }).catch(() => {});
     }
     const ip = req.headers.get("x-forwarded-for") ?? "local";
     const browser = req.headers.get("user-agent")?.slice(0, 200) ?? "-";

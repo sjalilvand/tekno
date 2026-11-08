@@ -221,6 +221,17 @@ function Invoke-DataImport {
   Write-Ok "انتقال داده کامل شد (وضعیت: $DataDir\import_status.json)"
 }
 
+# ------------------------------------------------------------- حساب‌های مدیریتی
+function Invoke-SeedAdmin {
+  Write-Step "ایجاد/به‌روزرسانی حساب‌های مدیریتی (admin)"
+  Push-Location $InstallDir
+  Invoke-Native { npx tsx prisma/seed-admin.ts 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+  $code = $LASTEXITCODE
+  Pop-Location
+  if ($code -ne 0) { Write-Warn2 "ایجاد حساب‌های مدیریتی ناموفق بود — دستی اجرا کنید: npx tsx prisma/seed-admin.ts"; return }
+  Write-Ok "حساب‌های admin / manager / consultant با رمز 123456 آماده‌اند"
+}
+
 # ------------------------------------------------------------- ساخت و اجرا
 function Invoke-Build {
   if ($SkipBuild) { Write-Warn2 "ساخت رد شد (-SkipBuild)"; return }
@@ -310,6 +321,7 @@ switch ($Mode) {
     Write-DotEnv
     Invoke-PrismaSetup
     if ($ImportSqlite) { Invoke-DataImport }
+    Invoke-SeedAdmin
     Invoke-Build
     Start-App
     if ($AutoStart) { Register-AutoStart }
@@ -322,6 +334,7 @@ switch ($Mode) {
     Get-Source
     Install-Dependencies
     Invoke-PrismaSetup
+    Invoke-SeedAdmin
     Invoke-Build
     Stop-App
     Start-App
@@ -330,5 +343,5 @@ switch ($Mode) {
   "stop"    { Stop-App }
   "restart" { Stop-App; Start-App }
   "status"  { Show-Status }
-  "import"  { Write-DotEnv; Invoke-DataImport }
+  "import"  { Write-DotEnv; Invoke-DataImport; Invoke-SeedAdmin }
 }

@@ -14,7 +14,8 @@
     "db:generate:mysql": "prisma generate --schema prisma/schema.mysql.prisma",
     "db:push:mysql": "prisma db push --schema prisma/schema.mysql.prisma --accept-data-loss",
     "db:import:mysql": "tsx prisma/import-sqlite-to-mysql.ts",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "seed:admin": "tsx prisma/seed-admin.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

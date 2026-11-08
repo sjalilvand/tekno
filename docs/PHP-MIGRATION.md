@@ -18,6 +18,14 @@
 - `POST /api/integrations/run` با `{ "action": "sms-dispatch", "limit": 200, "retry": true }`
 - `POST /api/integrations/run` با `{ "action": "soha-sync", "entity": "Patients|Referrals", "direction": "IN|OUT" }`
 
+## مهاجرت تدریجی احراز هویت (رمزهای کاربران قدیمی)
+
+| # | مورد | مبدأ (PHP) | مقصد (TS) | وضعیت |
+|---|---|---|---|---|
+| ۱ | بررسی رمز با هش‌های قدیمی (md5/sha1/sha256/متن ساده) | تابع login در PHP | `verifyPassword()` در `src/lib/server.ts` | ✅ انجام شد |
+| ۲ | ارتقای خودکار هش قدیمی به scrypt در اولین ورود موفق | — | `src/app/api/auth/login/route.ts` | ✅ انجام شد |
+| ۳ | اگر PHP قالب دیگری داشت (مثلاً md5 با نمک ثابت) | فایل PHP مربوطه | افزودن یک شرط به `verifyPassword` | ⬜ در صورت نیاز |
+
 ## چک‌لیست انتقال — پیامک واقعی
 
 | # | مورد | مبدأ (PHP) | مقصد (TS) | وضعیت |
