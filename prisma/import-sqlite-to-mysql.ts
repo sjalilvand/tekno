@@ -15,6 +15,9 @@
 //      Boolean  → 0/1 → true/false
 //      BigInt   → عدد (در صورت ناامن بودن → BigInt)
 //  • import_status.json کنار فایل مبدأ نوشته می‌شود تا با --resume قابل ادامه باشد
+//  • نگاشت هوشمند ستون‌ها: تطبیق دقیق، سپس بی‌حساس به بزرگی حروف، سپس بدون "_" و "-"
+//  • جدولی که هیچ ستون مشترکی نداشته باشد یا خطا بدهد، با گزارش واضح رد می‌شود
+//    و انتقال بقیهٔ جدول‌ها ادامه می‌یابد (توقف کامل فقط وقتی که هیچ ردیفی منتقل نشود)
 // =====================================================================
 
 import fs from "node:fs";
@@ -161,6 +164,32 @@ async function loadDeps() {
 const q = (id: string) => `"${id.replace(/"/g, '""')}"`;
 const bt = (id: string) => "`" + id.replace(/`/g, "``") + "`";
 
+// --------------------- نگاشت ستون‌ها ---------------------
+// ستون SQLite → ستون اسکیما (برای SELECT با نام مستعار مقصد)
+type ColMap = { sqlite: string; target: string; kind: Kind };
+
+function buildColMap(sqliteCols: string[], info: TableInfo): ColMap[] {
+  const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]+/g, "");
+  const exact = new Set(Object.keys(info.columns));
+  const lower = new Map<string, string>();
+  const normed = new Map<string, string>();
+  for (const name of Object.keys(info.columns)) {
+    if (!lower.has(name.toLowerCase())) lower.set(name.toLowerCase(), name);
+    const n = norm(name);
+    if (!normed.has(n)) normed.set(n, name);
+  }
+  const used = new Set<string>();
+  const out: ColMap[] = [];
+  for (const col of sqliteCols) {
+    const target = exact.has(col) ? col : (lower.get(col.toLowerCase()) ?? normed.get(norm(col)));
+    if (target && !used.has(target)) {
+      used.add(target);
+      out.push({ sqlite: col, target, kind: info.columns[target] });
+    }
+  }
+  return out;
+}
+
 async function main() {
 const { Database, mysql } = await loadDeps();
 
@@ -189,7 +218,7 @@ if (!DRY_RUN) {
 
 // --------------------------- وضعیت انتقال ---------------------------
 const statusFile = path.join(path.dirname(SOURCE), "import_status.json");
-type StatusMap = Record<string, { rows: number; done: boolean; ts: string; error?: string }>;
+type StatusMap = Record<string, any>;
 let status: StatusMap = {};
 if (fs.existsSync(statusFile)) {
   try { status = JSON.parse(fs.readFileSync(statusFile, "utf8")); } catch { status = {}; }
@@ -197,10 +226,14 @@ if (fs.existsSync(statusFile)) {
 function saveStatus() {
   fs.writeFileSync(statusFile, JSON.stringify(status, null, 2), "utf8");
 }
+// فیلدهای سطح بالای فایل وضعیت را تازه‌سازی کن تا گمراه‌کننده نباشند
+status.state = "running";
+status.phase = "در حال انتقال";
+saveStatus();
 
 // --------------------------- آمار اولیه ---------------------------
 console.log("\n─── شمارش ردیف‌ها ───");
-const plan: { table: string; info: TableInfo; count: number; columns: string[] }[] = [];
+const plan: { table: string; info: TableInfo; count: number; cols: ColMap[] }[] = [];
 let totalRows = 0;
 for (const table of sqliteTables) {
   if (ONLY && !ONLY.includes(table)) continue;
@@ -211,14 +244,24 @@ for (const table of sqliteTables) {
     continue;
   }
   const cnt = sqlite.prepare(`SELECT COUNT(*) AS c FROM ${q(table)}`).get() as { c: number };
-  // فقط ستون‌های مشترک بین SQLite و اسکیما
+  // نگاشت ستون‌های SQLite به ستون‌های اسکیما (دقیق → بی‌حساس به حروف → بدون _ و -)
   const sqliteCols = (sqlite.prepare(`PRAGMA table_info(${q(table)})`).all() as any[]).map((c) => c.name);
-  const columns = sqliteCols.filter((c) => c in info.columns);
-  plan.push({ table, info, count: cnt.c, columns });
+  const cols = buildColMap(sqliteCols, info);
+  if (!cols.length) {
+    console.log(`  ⚠ ${table} — هیچ ستون مشترکی با اسکیما ندارد — رد شد`);
+    console.log(`     ستون‌های SQLite: ${sqliteCols.slice(0, 10).join(", ")}${sqliteCols.length > 10 ? " …" : ""}`);
+    status[table] = {
+      rows: cnt.c, done: false, ts: new Date().toISOString(),
+      error: `no matching columns; sqlite cols: ${sqliteCols.join(", ").slice(0, 280)}`,
+    };
+    saveStatus();
+    continue;
+  }
+  plan.push({ table, info, count: cnt.c, cols });
   totalRows += cnt.c;
 }
 for (const p of plan) {
-  console.log(`  • ${p.table.padEnd(28)} ${p.count.toLocaleString("en-US").padStart(12)} ردیف`);
+  console.log(`  • ${p.table.padEnd(28)} ${p.count.toLocaleString("en-US").padStart(12)} ردیف  (${p.cols.length} ستون)`);
 }
 console.log(`  = ${totalRows.toLocaleString("en-US")} ردیف در ${plan.length} جدول\n`);
 
@@ -226,7 +269,8 @@ if (DRY_RUN) {
   // نمایش یک ردیف نمونهٔ تبدیل‌شده برای اطمینان
   const sample = plan.find((p) => p.count > 0);
   if (sample) {
-    const row = sqlite.prepare(`SELECT * FROM ${q(sample.table)} LIMIT 1`).get() as Record<string, unknown>;
+    const colSel = sample.cols.map((c) => `${q(c.sqlite)} AS ${q(c.target)}`).join(", ");
+    const row = sqlite.prepare(`SELECT ${colSel} FROM ${q(sample.table)} LIMIT 1`).get() as Record<string, unknown>;
     console.log(`نمونهٔ تبدیل (${sample.table}):`);
     for (const [col, val] of Object.entries(row)) {
       const kind = sample.info.columns[col];
@@ -248,25 +292,25 @@ function hasRowid(table: string): boolean {
 
 const t0 = Date.now();
 let grandTotal = 0;
+const failed: { name: string; error: string }[] = [];
 
 for (const p of plan) {
-  const { table, info, count, columns } = p;
+  const { table, info, count, cols } = p;
   if (RESUME && status[table]?.done) {
     console.log(`⤼ ${table} — قبلاً کامل منتقل شده (${status[table].rows.toLocaleString("en-US")}) — رد شد`);
     grandTotal += status[table].rows;
     continue;
   }
   const started = Date.now();
+  let inserted = 0;
   try {
     if (MODE === "truncate") {
       await conn.query(`TRUNCATE TABLE ${bt(table)}`);
     }
 
-    const selectBase = `SELECT ${columns.map(q).join(", ")} FROM ${q(table)}`;
-    const insertSql = `INSERT ${MODE === "append" ? "IGNORE " : ""}INTO ${bt(table)} (${columns.map(bt).join(", ")}) VALUES ?`;
-    const converters = columns.map((c) => info.columns[c]);
+    const colSel = cols.map((c) => `${q(c.sqlite)} AS ${q(c.target)}`).join(", ");
+    const insertSql = `INSERT ${MODE === "append" ? "IGNORE " : ""}INTO ${bt(table)} (${cols.map((c) => bt(c.target)).join(", ")}) VALUES ?`;
 
-    let inserted = 0;
     if (count === 0) {
       status[table] = { rows: 0, done: true, ts: new Date().toISOString() };
       saveStatus();
@@ -277,10 +321,12 @@ for (const p of plan) {
     if (hasRowid(table)) {
       let lastRowid = 0;
       for (;;) {
-        const rows = sqlite.prepare(`${selectBase.replace(/^SELECT /i, "SELECT rowid AS __rz_rowid, ")} WHERE rowid > ? ORDER BY rowid LIMIT ?`).all(lastRowid, BATCH) as any[];
+        const rows = sqlite.prepare(
+          `SELECT rowid AS __rz_rowid, ${colSel} FROM ${q(table)} WHERE rowid > ? ORDER BY rowid LIMIT ?`
+        ).all(lastRowid, BATCH) as any[];
         if (!rows.length) break;
         lastRowid = rows[rows.length - 1].__rz_rowid ?? lastRowid;
-        const values = rows.map((r) => columns.map((c, i) => convert(r[c], converters[i])));
+        const values = rows.map((r) => cols.map((c) => convert(r[c.target], c.kind)));
         await conn.query(insertSql, [values]);
         inserted += rows.length;
         const pct = ((inserted / count) * 100).toFixed(1);
@@ -289,9 +335,9 @@ for (const p of plan) {
     } else {
       // جدول WITHOUT ROWID — صفحه‌بندی با OFFSET
       for (let offset = 0; offset < count; offset += BATCH) {
-        const rows = sqlite.prepare(`${selectBase} LIMIT ? OFFSET ?`).all(BATCH, offset) as any[];
+        const rows = sqlite.prepare(`SELECT ${colSel} FROM ${q(table)} LIMIT ? OFFSET ?`).all(BATCH, offset) as any[];
         if (!rows.length) break;
-        const values = rows.map((r) => columns.map((c, i) => convert(r[c], converters[i])));
+        const values = rows.map((r) => cols.map((c) => convert(r[c.target], c.kind)));
         await conn.query(insertSql, [values]);
         inserted += rows.length;
         const pct = ((inserted / count) * 100).toFixed(1);
@@ -307,10 +353,10 @@ for (const p of plan) {
   } catch (e: any) {
     const msg = e?.message ?? "خطای ناشناخته";
     console.error(`\r  ✘ ${table} — خطا: ${msg}${" ".repeat(20)}`);
-    status[table] = { rows: 0, done: false, ts: new Date().toISOString(), error: msg.slice(0, 300) };
+    console.error("     این جدول رد شد — انتقال بقیهٔ جدول‌ها ادامه می‌یابد");
+    failed.push({ name: table, error: msg.slice(0, 300) });
+    status[table] = { rows: inserted, done: false, ts: new Date().toISOString(), error: msg.slice(0, 300) };
     saveStatus();
-    console.error("انتقال متوقف شد. پس از رفع مشکل، همان دستور را با --resume دوباره اجرا کنید.");
-    process.exit(2);
   }
 }
 
@@ -320,8 +366,19 @@ await conn.end();
 const totalSecs = ((Date.now() - t0) / 1000).toFixed(1);
 console.log("\n═══════════════════════════════════════════");
 console.log(`✔ انتقال کامل شد: ${grandTotal.toLocaleString("en-US")} ردیف در ${totalSecs} ثانیه`);
+if (failed.length) {
+  console.log(`\n⚠ ${failed.length} جدول منتقل نشد — برای بررسی، این لیست را ارسال کنید:`);
+  for (const f of failed) console.log(`  • ${f.name}: ${f.error}`);
+  console.log("  جزئیات کامل در فایل import_status.json ثبت شده است.");
+}
+status.state = failed.length ? "partial" : "done";
+status.phase = failed.length ? "پایان با جدول‌های ناقص" : "پایان موفق";
+saveStatus();
 console.log(`  وضعیت در فایل: ${statusFile}`);
 console.log("مرحلهٔ بعد: اجرای سامانه با npm run build و npm run start");
+
+// فقط وقتی هیچ ردیفی منتقل نشده، خطا برگردان (توقف کامل deploy)
+if (failed.length && grandTotal === 0) process.exit(2);
 }
 
 main().catch((e) => {
