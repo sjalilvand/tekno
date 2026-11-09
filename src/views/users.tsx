@@ -1,10 +1,10 @@
 "use client";
-// مدیریت کاربران
+// مدیریت کاربران — تعریف، ویرایش، مسدودسازی و پرونده (نسخهٔ ۶.۱۱)
 import * as React from "react";
 import { PageHeader, FilterBar, DataTable, StatusBadge, NameAvatar, LoadingView, SectionCard, DotBadge, Column } from "@/components/shared";
 import { faNum, faDigits, jDate, jDateTime } from "@/lib/jalali";
 import { api, useQuery, navigate } from "@/lib/client";
-import { Users, Search, ShieldCheck, Ban, UserRoundCheck, Phone, CalendarDays, GraduationCap, ScrollText, BadgeCheck, FolderOpen } from "lucide-react";
+import { Users, Search, ShieldCheck, Ban, UserRoundCheck, Phone, CalendarDays, GraduationCap, ScrollText, BadgeCheck, FolderOpen, UserPlus, Pencil, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,21 @@ type UserRow = {
 type Meta = {
   provinces: { id: number; title: string }[];
   roles: { id: number; title: string }[];
+  centers: { id: number; title: string }[];
+};
+
+// فرم تعریف/ویرایش کاربر — نسخهٔ ۶.۱۱
+type EditorState = {
+  id: number | null;
+  nid: string; username: string; password: string;
+  name: string; family: string; mobile: string; email: string;
+  gender: string; provinceId: string; roleId: string; consultantLevel: string;
+  bio: string; centerIds: number[];
+};
+
+const EMPTY_EDITOR: EditorState = {
+  id: null, nid: "", username: "", password: "", name: "", family: "", mobile: "", email: "",
+  gender: "", provinceId: "", roleId: "", consultantLevel: "", bio: "", centerIds: [],
 };
 
 type UserDetail = {
@@ -53,6 +68,78 @@ export function UsersView() {
     () => (selected ? api(`/api/users/${selected}`) : Promise.resolve(null)),
     [selected]
   );
+
+  // ---------- تعریف / ویرایش کاربر (نسخهٔ ۶.۱۱) ----------
+  const [editor, setEditor] = React.useState<EditorState | null>(null);
+  const [savingUser, setSavingUser] = React.useState(false);
+
+  const openNewUser = () => setEditor({ ...EMPTY_EDITOR });
+
+  const openEditUser = async (u: UserRow) => {
+    try {
+      const [d, centers] = await Promise.all([
+        api<any>(`/api/users/${u.id}`),
+        api<{ centers: { id: number }[] }>(`/api/users/centers?userId=${u.id}`).catch(() => ({ centers: [] })),
+      ]);
+      setEditor({
+        id: u.id,
+        nid: String(d.user.nid ?? ""), username: d.user.username ?? "", password: "",
+        name: d.user.name ?? "", family: d.user.family ?? "", mobile: String(d.user.mobile ?? ""),
+        email: d.user.email ?? "", gender: d.user.gender ?? "",
+        provinceId: d.user.provinceId ? String(d.user.provinceId) : "",
+        roleId: d.user.roles?.[0]?.role?.id ? String(d.user.roles[0].role.id) : "",
+        consultantLevel: d.user.consultantLevel ? String(d.user.consultantLevel) : "",
+        bio: d.user.bio ?? "",
+        centerIds: (centers.centers ?? []).map((c: { id: number }) => Number(c.id)),
+      });
+    } catch (e) {
+      toast({ title: e instanceof Error ? e.message : "خطا", variant: "destructive" });
+    }
+  };
+
+  const saveUser = async () => {
+    if (!editor) return;
+    setSavingUser(true);
+    try {
+      const base: Record<string, unknown> = {
+        nid: editor.nid.replace(/\D/g, ""), name: editor.name.trim(), family: editor.family.trim(),
+        mobile: editor.mobile.replace(/\D/g, ""), email: editor.email || undefined,
+        gender: editor.gender || undefined,
+        provinceId: editor.provinceId ? Number(editor.provinceId) : null,
+        consultantLevel: editor.consultantLevel ? Number(editor.consultantLevel) : null,
+        bio: editor.bio || null,
+        centerIds: editor.centerIds,
+      };
+      if (editor.id) {
+        await api(`/api/users/${editor.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            ...base,
+            username: editor.username.trim() || undefined,
+            password: editor.password || undefined,
+            roleId: editor.roleId ? Number(editor.roleId) : 0,
+          }),
+        });
+        toast({ title: "کاربر با موفقیت ویرایش شد" });
+      } else {
+        await api("/api/users", {
+          method: "POST",
+          body: JSON.stringify({
+            ...base,
+            username: editor.username.trim() || undefined,
+            password: editor.password || undefined,
+            roleId: editor.roleId ? Number(editor.roleId) : undefined,
+          }),
+        });
+        toast({ title: "کاربر جدید با موفقیت تعریف شد" });
+      }
+      setEditor(null);
+      refetch();
+    } catch (e) {
+      toast({ title: e instanceof Error ? e.message : "خطا", variant: "destructive" });
+    }
+    setSavingUser(false);
+  };
 
   const toggleBlock = async (u: UserRow) => {
     await api(`/api/users/${u.id}`, { method: "PATCH", body: JSON.stringify({ blocked: !u.blocked }) });
@@ -89,6 +176,9 @@ export function UsersView() {
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setSelected(u.id); }} title="پرونده کاربر">
             <UserRoundCheck className="h-4 w-4 text-primary" />
           </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); openEditUser(u); }} title="ویرایش کاربر">
+            <Pencil className="h-4 w-4 text-amber-600" />
+          </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); toggleBlock(u); }} title={u.blocked ? "رفع مسدودی" : "مسدودسازی"}>
             <Ban className={`h-4 w-4 ${u.blocked ? "text-emerald-600" : "text-rose-500"}`} />
           </Button>
@@ -103,6 +193,11 @@ export function UsersView() {
         title="کاربران"
         subtitle={`مدیریت ${faNum(data?.total ?? 0)} کاربر سامانه`}
         icon={<Users className="h-5 w-5" />}
+        actions={
+          <Button className="brand-gradient gap-1.5 text-white" onClick={openNewUser}>
+            <UserPlus className="h-4 w-4" /> تعریف کاربر جدید
+          </Button>
+        }
       />
 
       <FilterBar className="mb-4">
@@ -243,6 +338,106 @@ export function UsersView() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* تعریف / ویرایش کاربر — نسخهٔ ۶.۱۱ */}
+      <Dialog open={editor !== null} onOpenChange={(o) => !o && setEditor(null)}>
+        <DialogContent className="max-w-2xl p-0" dir="rtl">
+          <DialogHeader className="border-b bg-gradient-to-l from-accent/60 to-transparent px-6 py-4 text-right">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <UserPlus className="h-4.5 w-4.5 text-primary" />
+              {editor?.id ? "ویرایش کاربر" : "تعریف کاربر جدید"}
+            </DialogTitle>
+          </DialogHeader>
+          {editor && (
+            <div className="max-h-[62vh] space-y-4 overflow-y-auto px-6 py-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <EField label="کد ملی *"><Input value={editor.nid} onChange={(e) => setEditor({ ...editor, nid: e.target.value })} dir="ltr" inputMode="numeric" className="h-9 text-[12.5px]" /></EField>
+                <EField label="موبایل *"><Input value={editor.mobile} onChange={(e) => setEditor({ ...editor, mobile: e.target.value })} dir="ltr" inputMode="numeric" className="h-9 text-[12.5px]" /></EField>
+                <EField label="نام *"><Input value={editor.name} onChange={(e) => setEditor({ ...editor, name: e.target.value })} className="h-9 text-[12.5px]" /></EField>
+                <EField label="نام خانوادگی *"><Input value={editor.family} onChange={(e) => setEditor({ ...editor, family: e.target.value })} className="h-9 text-[12.5px]" /></EField>
+                <EField label="نام کاربری" hint="خالی = کد ملی"><Input value={editor.username} onChange={(e) => setEditor({ ...editor, username: e.target.value })} dir="ltr" className="h-9 text-[12.5px]" /></EField>
+                <EField label={editor.id ? "رمز عبور جدید" : "رمز عبور"} hint={editor.id ? "خالی = بدون تغییر رمز" : "خالی = ۱۲۳۴۵۶"}>
+                  <Input value={editor.password} onChange={(e) => setEditor({ ...editor, password: e.target.value })} dir="ltr" type="password" className="h-9 text-[12.5px]" />
+                </EField>
+                <EField label="جنسیت">
+                  <Select value={editor.gender || "none"} onValueChange={(v) => setEditor({ ...editor, gender: v === "none" ? "" : v })}>
+                    <SelectTrigger className="h-9 text-[12.5px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">—</SelectItem>
+                      <SelectItem value="زن">زن</SelectItem>
+                      <SelectItem value="مرد">مرد</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </EField>
+                <EField label="استان">
+                  <Select value={editor.provinceId || "none"} onValueChange={(v) => setEditor({ ...editor, provinceId: v === "none" ? "" : v })}>
+                    <SelectTrigger className="h-9 text-[12.5px]"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-60">
+                      <SelectItem value="none">—</SelectItem>
+                      {(meta.data?.provinces ?? []).map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.title}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </EField>
+                <EField label="نقش" hint="خالی = بدون نقش">
+                  <Select value={editor.roleId || "none"} onValueChange={(v) => setEditor({ ...editor, roleId: v === "none" ? "" : v })}>
+                    <SelectTrigger className="h-9 text-[12.5px]"><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-60">
+                      <SelectItem value="none">بدون نقش</SelectItem>
+                      {(meta.data?.roles ?? []).map((r) => <SelectItem key={r.id} value={String(r.id)}>{r.title}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </EField>
+                <EField label="سطح مشاور">
+                  <Select value={editor.consultantLevel || "none"} onValueChange={(v) => setEditor({ ...editor, consultantLevel: v === "none" ? "" : v })}>
+                    <SelectTrigger className="h-9 text-[12.5px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">—</SelectItem>
+                      {[1, 2, 3, 4, 5].map((l) => <SelectItem key={l} value={String(l)}>سطح {faNum(l)}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </EField>
+                <EField label="ایمیل"><Input value={editor.email} onChange={(e) => setEditor({ ...editor, email: e.target.value })} dir="ltr" className="h-9 text-[12.5px]" /></EField>
+              </div>
+              <EField label="کلینیک‌های همکاری" hint="یک کاربر می‌تواند همزمان در چند کلینیک فعال باشد — برای تفکیک مشاهدهٔ داده">
+                <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto rounded-xl border bg-muted/20 p-2.5">
+                  {(meta.data?.centers ?? []).length === 0 && <span className="text-[11px] text-muted-foreground">مرکزی تعریف نشده است.</span>}
+                  {(meta.data?.centers ?? []).map((c) => {
+                    const on = editor.centerIds.includes(c.id);
+                    return (
+                      <button key={c.id} type="button"
+                        onClick={() => setEditor({ ...editor, centerIds: on ? editor.centerIds.filter((x) => x !== c.id) : [...editor.centerIds, c.id] })}
+                        className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${on ? "border-primary bg-primary text-white" : "bg-card text-muted-foreground hover:border-ring hover:text-foreground"}`}>
+                        {c.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </EField>
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2 border-t bg-muted/40 px-6 py-3.5">
+            <Button variant="outline" size="sm" onClick={() => setEditor(null)}>انصراف</Button>
+            <Button
+              className="brand-gradient gap-1.5 text-white" size="sm"
+              disabled={savingUser || !editor?.nid || !editor?.name || !editor?.family || !editor?.mobile}
+              onClick={saveUser}
+            >
+              {savingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
+              {editor?.id ? "ذخیره تغییرات" : "تعریف کاربر"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function EField({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-[12px] font-bold">{label}</label>
+      {children}
+      {hint && <p className="mt-1 text-[10px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }

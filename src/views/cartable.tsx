@@ -9,11 +9,12 @@ import { api, navigate } from "@/lib/client";
 import { faNum, faDigits, jDate } from "@/lib/jalali";
 import { cn } from "@/lib/utils";
 import { PageHeader, SectionCard, StatCard, StatusBadge, LoadingView, NameAvatar } from "@/components/shared";
+import { NewSessionDialog, NewReserveDialog, NewAcuteDialog, QuestionnaireDialog } from "@/components/record-dialogs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  FolderOpen, Search, User, CalendarCheck, History, Lightbulb, FileText,
+  FolderOpen, Search, User, CalendarCheck, CalendarPlus, CalendarClock, ClipboardList, History, Lightbulb, FileText,
   Wallet, Siren, ShieldCheck, Clock, FileImage, Pill, CheckCircle2, XCircle,
   AlertTriangle, ArrowLeftRight, Mail, Smartphone, ExternalLink, Loader2,
   Copy, IdCard, Smartphone as MobileIcon, ArrowRight,
@@ -78,6 +79,7 @@ type Dossier = {
   chainStatus: { eventId: number; status: string; spans: { key: string; name: string; state: string; hours: number | null }[] }[];
   timeline: { at: string; kind: string; title: string; detail?: string; ref?: string }[];
   files: { id: number; name: string; uploadDateTime: string }[];
+  questionnaires: { id: number; title: string; createdAt: string; data: Record<string, string> }[];
   recommendations: Rec[];
   checklists: { id: number; title: string; status: string; done: number; total: number; items: { id: number; title: string; done: boolean; auto: boolean }[] }[];
 };
@@ -98,6 +100,14 @@ export function CartableView() {
   const [docError, setDocError] = React.useState<string | null>(null);
   const [loadingList, setLoadingList] = React.useState(true);
   const [loadingDoc, setLoadingDoc] = React.useState(false);
+  // حالت نیابتی — برای دکمهٔ «بازگشت به حساب مدیر» در پرونده (نسخهٔ ۶.۱۱)
+  const [acting, setActing] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    api<{ acting: { actorName: string } | null }>("/api/auth/me")
+      .then((d) => setActing(d.acting?.actorName ?? null))
+      .catch(() => {});
+  }, []);
 
   const loadList = React.useCallback(async (query: string) => {
     setLoadingList(true);
@@ -253,7 +263,7 @@ export function CartableView() {
               </div>
             </SectionCard>
           )}
-          {!loadingDoc && dossier && <DossierPanel d={dossier} onBack={backToList} />}
+          {!loadingDoc && dossier && <DossierPanel d={dossier} onBack={backToList} onChanged={() => selected && select(selected)} acting={acting} />}
         </div>
       </div>
     </div>
@@ -261,17 +271,62 @@ export function CartableView() {
 }
 
 // ================================================================ پرونده
-function DossierPanel({ d, onBack }: { d: Dossier; onBack: () => void }) {
+function DossierPanel({ d, onBack, onChanged, acting }: { d: Dossier; onBack: () => void; onChanged: () => void; acting: string | null }) {
   const p = d.person;
+  // دیالوگ‌های ثبت سریع در پرونده — نسخهٔ ۶.۱۱
+  const [sessionOpen, setSessionOpen] = React.useState(false);
+  const [reserveOpen, setReserveOpen] = React.useState(false);
+  const [acuteOpen, setAcuteOpen] = React.useState(false);
+  const [qOpen, setQOpen] = React.useState(false);
+  const [exiting, setExiting] = React.useState(false);
+
+  // بازگشت به حساب مدیر — خروج از حالت نیابتی و رفرش کامل
+  const exitActing = async () => {
+    setExiting(true);
+    try {
+      await api("/api/users/impersonate", { method: "DELETE" });
+      window.location.hash = "#/cartable";
+      window.location.reload();
+    } catch { setExiting(false); }
+  };
+
+  const latestEventId = d.events[0]?.id ?? null;
+
   return (
     <div className="space-y-4">
-      {/* نوار بازگشت به کارتابل — نسخهٔ ۶.۱۰ */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1.5 rounded-full border bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-muted-foreground shadow-sm transition-all hover:border-ring hover:text-foreground"
-      >
-        <ArrowRight className="h-3.5 w-3.5" /> بازگشت به کارتابل
-      </button>
+      {/* نوار بازگشت + ثبت سریع — نسخهٔ ۶.۱۱ */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 rounded-full border bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-muted-foreground shadow-sm transition-all hover:border-ring hover:text-foreground"
+        >
+          <ArrowRight className="h-3.5 w-3.5" /> بازگشت به کارتابل
+        </button>
+        <span className="mx-1 h-5 w-px bg-border" />
+        <button onClick={() => setSessionOpen(true)} className="brand-gradient flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11.5px] font-bold text-white shadow-sm transition-all hover:opacity-90">
+          <CalendarPlus className="h-3.5 w-3.5" /> ثبت جلسه
+        </button>
+        <button onClick={() => setReserveOpen(true)} className="flex items-center gap-1.5 rounded-full border bg-card px-3.5 py-1.5 text-[11.5px] font-bold shadow-sm transition-all hover:border-ring">
+          <CalendarClock className="h-3.5 w-3.5 text-cyan-600" /> ثبت رزرو
+        </button>
+        <button onClick={() => setAcuteOpen(true)} className="flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3.5 py-1.5 text-[11.5px] font-bold text-rose-700 shadow-sm transition-all hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+          <Siren className="h-3.5 w-3.5" /> ثبت مورد حاد
+        </button>
+        <button onClick={() => setQOpen(true)} className="flex items-center gap-1.5 rounded-full border bg-card px-3.5 py-1.5 text-[11.5px] font-bold shadow-sm transition-all hover:border-ring">
+          <ClipboardList className="h-3.5 w-3.5 text-teal-600" /> ثبت پرسشنامه
+        </button>
+        {/* دکمهٔ بازگشت به حساب مدیر در حالت نیابتی — در خود پرونده (نسخهٔ ۶.۱۱) */}
+        {acting && (
+          <button
+            onClick={exitActing}
+            disabled={exiting}
+            className="mr-auto flex items-center gap-1.5 rounded-full bg-violet-600 px-3.5 py-1.5 text-[11.5px] font-bold text-white shadow-sm transition-all hover:bg-violet-700 disabled:opacity-60"
+          >
+            {exiting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+            بازگشت به حساب مدیر
+          </button>
+        )}
+      </div>
       {/* سربرگ پرونده */}
       <SectionCard bodyClass="p-4">
         <div className="flex flex-wrap items-center gap-4">
@@ -472,7 +527,25 @@ function DossierPanel({ d, onBack }: { d: Dossier; onBack: () => void }) {
               </ul>
             )}
           </SectionCard>
-          <SectionCard title="جلسات با فرم بالینی" subtitle="ارزیابی روان‌شناختی و مداخلات">
+          <SectionCard title="پرسشنامه‌های ثبت‌شده" subtitle={`${faNum(d.questionnaires.length)} پاسخ`}>
+            {d.questionnaires.length === 0 ? <p className="text-xs text-muted-foreground">پرسشنامه‌ای برای این متقاضی ثبت نشده است.</p> : (
+              <ul className="space-y-2">
+                {d.questionnaires.map((q) => (
+                  <li key={q.id} className="rounded-xl border bg-muted/30 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <ClipboardList className="h-4 w-4 shrink-0 text-teal-600" />
+                      <span className="min-w-0 flex-1 truncate text-[12px] font-bold">{q.title}</span>
+                      <span className="text-[10.5px] text-muted-foreground">{q.createdAt}</span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+                      {Object.entries(q.data).slice(0, 4).map(([k, v]) => `${v}`).filter(Boolean).join(" — ")}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
+          <SectionCard title="جلسات با فرم بالینی" subtitle="ارزیابی روان‌شناختی و مداخلات" className="lg:col-span-2">
             {d.events.filter((e) => e.isEms || e.medicines.length || e.disorders.length).length === 0 && (
               <p className="text-xs text-muted-foreground">فرم بالینی خاصی ثبت نشده است.</p>
             )}
@@ -527,6 +600,32 @@ function DossierPanel({ d, onBack }: { d: Dossier; onBack: () => void }) {
           ))}
         </TabsContent>
       </Tabs>
+
+      {/* دیالوگ‌های ثبت سریع پرونده — نسخهٔ ۶.۱۱ */}
+      <NewSessionDialog
+        open={sessionOpen}
+        onClose={() => setSessionOpen(false)}
+        onSaved={onChanged}
+        presetUser={{ id: p.id, name: p.name, family: p.family }}
+      />
+      <NewReserveDialog
+        open={reserveOpen}
+        onClose={() => setReserveOpen(false)}
+        onSaved={onChanged}
+        presetEventId={latestEventId}
+      />
+      <NewAcuteDialog
+        open={acuteOpen}
+        onClose={() => setAcuteOpen(false)}
+        onSaved={onChanged}
+        presetEventId={latestEventId}
+      />
+      <QuestionnaireDialog
+        open={qOpen}
+        onClose={() => setQOpen(false)}
+        onSaved={onChanged}
+        presetUserId={p.id}
+      />
     </div>
   );
 }

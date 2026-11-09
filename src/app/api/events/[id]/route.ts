@@ -63,6 +63,31 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return ok({ ok: true });
   }
 
+  // ثبت انجام شدن جلسه (نسخهٔ ۶.۱۱) — پایان جلسه + ورود به چرخهٔ تایید + یادداشت اختیاری
+  if (action === "complete") {
+    // فقط پذیرنده/ناظر جلسه، خودِ مراجع یا مدیر
+    if (!acc.seeAllData && event.acceptorId !== acc.uid && event.supervisorId !== acc.uid && event.userId !== acc.uid)
+      return fail("این جلسه در پروندهٔ شما نیست", 403);
+    if (event.status === "تایید نهایی") return fail("این جلسه قبلاً تایید نهایی شده است");
+    const doneAt = body.date ? new Date(body.date) : now;
+    if (isNaN(doneAt.getTime())) return fail("تاریخ انجام نامعتبر است");
+    await db.event.update({
+      where: { id: eid },
+      data: {
+        endDate: doneAt,
+        startDate: event.startDate ?? doneAt,
+        status: "در انتظار تایید مدیر مرکز",
+      },
+    });
+    if (comment?.trim()) {
+      await db.eventComment.create({
+        data: { eventId: eid, consultantNID: user.nid, comment: `ثبت انجام جلسه: ${comment.trim().slice(0, 1000)}`, dateTime: now },
+      });
+    }
+    await db.log.create({ data: { userId: user.id, category: "جلسات", description: `ثبت انجام جلسه #${eid}`, level: 2, ip: req.headers.get("x-forwarded-for") ?? "-" } });
+    return ok({ ok: true });
+  }
+
   if (action === "reject") {
     if (!comment?.trim()) return fail("دلیل رد الزامی است");
     await db.event.update({

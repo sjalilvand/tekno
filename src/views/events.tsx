@@ -1,10 +1,11 @@
 "use client";
-// جلسات مشاوره — لیست + جزئیات + زنجیره تایید
+// جلسات مشاوره — لیست + ثبت جلسه جدید + جزئیات + ثبت انجام + زنجیره تایید
 import * as React from "react";
 import { PageHeader, FilterBar, DataTable, StatusBadge, NameAvatar, LoadingView, DateCell, SectionCard, Column, ApplicantCell } from "@/components/shared";
+import { NewSessionDialog, CompleteSessionDialog, NewAcuteDialog } from "@/components/record-dialogs";
 import { faNum, faDigits, faMoney, jDate, jDateTime, jTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
-import { CalendarCheck, Search, CheckCircle2, XCircle, MessageSquarePlus, Clock, FileText, Stethoscope, Activity, Pill, CircleCheck, CircleX, Circle, Siren } from "lucide-react";
+import { CalendarCheck, CalendarPlus, Search, CheckCircle2, XCircle, MessageSquarePlus, Clock, FileText, Stethoscope, Activity, Pill, CircleCheck, CircleX, Circle, Siren } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,10 @@ export function EventsView() {
   const [centerId, setCenterId] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [selected, setSelected] = React.useState<number | null>(null);
+  // دیالوگ‌های ثبت — نسخهٔ ۶.۱۱
+  const [newOpen, setNewOpen] = React.useState(false);
+  const [completeOpen, setCompleteOpen] = React.useState(false);
+  const [acuteOpen, setAcuteOpen] = React.useState(false);
 
   const meta = useQuery<{ services: { id: number; name: string }[]; centers: { id: number; title: string }[] }>(() => api("/api/meta"), []);
   const { data, loading, refetch } = useQuery<{
@@ -108,6 +113,11 @@ export function EventsView() {
         title="جلسات مشاوره"
         subtitle={`مدیریت و پیگیری ${faNum(data?.total ?? 0)} جلسه`}
         icon={<CalendarCheck className="h-5 w-5" />}
+        actions={
+          <Button className="brand-gradient gap-1.5 text-white" onClick={() => setNewOpen(true)}>
+            <CalendarPlus className="h-4 w-4" /> ثبت جلسه جدید
+          </Button>
+        }
       />
 
       {/* تب‌های وضعیت */}
@@ -272,7 +282,18 @@ export function EventsView() {
               </div>
 
               <DialogFooter className="border-t bg-muted/40 px-6 py-4">
-                {detail.data.event.status.includes("در انتظار") && (
+                {/* ثبت انجام + مورد حاد برای همین جلسه — نسخهٔ ۶.۱۱ */}
+                {detail.data.event.status === "در انتظار پذیرش" && (
+                  <Button variant="outline" className="gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50" onClick={() => setCompleteOpen(true)}>
+                    <CheckCircle2 className="h-4 w-4" /> ثبت انجام جلسه
+                  </Button>
+                )}
+                {!detail.data.ems && detail.data.event.status !== "رد شده" && (
+                  <Button variant="outline" className="gap-1.5 border-rose-300 text-rose-700 hover:bg-rose-50" onClick={() => setAcuteOpen(true)}>
+                    <Siren className="h-4 w-4" /> ثبت مورد حاد
+                  </Button>
+                )}
+                {detail.data.event.status.includes("در انتظار") && detail.data.event.status !== "در انتظار پذیرش" && (
                   <>
                     <Button className="gap-1.5" onClick={() => act("confirm")}>
                       <CheckCircle2 className="h-4 w-4" /> تایید مرحله بعد
@@ -290,6 +311,21 @@ export function EventsView() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* دیالوگ‌های ثبت — نسخهٔ ۶.۱۱ */}
+      <NewSessionDialog open={newOpen} onClose={() => setNewOpen(false)} onSaved={refetch} />
+      <CompleteSessionDialog
+        open={completeOpen}
+        onClose={() => setCompleteOpen(false)}
+        onSaved={() => { detail.refetch(); refetch(); }}
+        event={selected ? { id: selected, title: detail.data?.event.service.name ?? "جلسه" } : null}
+      />
+      <NewAcuteDialog
+        open={acuteOpen}
+        onClose={() => setAcuteOpen(false)}
+        onSaved={() => { detail.refetch(); refetch(); }}
+        presetEventId={selected}
+      />
     </div>
   );
 }

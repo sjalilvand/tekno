@@ -1,11 +1,13 @@
 "use client";
-// رزرو مشاوره
+// رزرو مشاوره — فهرست + ثبت رزرو جدید (نسخهٔ ۶.۱۱)
 import * as React from "react";
 import { PageHeader, DataTable, StatusBadge, NameAvatar, Column, LoadingView, SectionCard, ApplicantCell } from "@/components/shared";
+import { NewReserveDialog } from "@/components/record-dialogs";
 import { faNum, faDigits, jDate, jTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
-import { CalendarClock, Search } from "lucide-react";
+import { CalendarClock, CalendarPlus, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
 type ReserveRow = {
@@ -17,7 +19,8 @@ type ByConsultant = { id: number; name: string; family: string; avatarColor: str
 
 export function ReservesView() {
   const [q, setQ] = React.useState("");
-  const { data, loading } = useQuery<{ total: number; totalPages: number; reserves: ReserveRow[]; byConsultant: ByConsultant[] }>(
+  const [newOpen, setNewOpen] = React.useState(false);
+  const { data, loading, refetch } = useQuery<{ total: number; totalPages: number; reserves: ReserveRow[]; byConsultant: ByConsultant[] }>(
     () => api(`/api/reserves?q=${encodeURIComponent(q)}&page=1&pageSize=50`), [q]
   );
 
@@ -45,7 +48,16 @@ export function ReservesView() {
 
   return (
     <div>
-      <PageHeader title="رزرو مشاوره" subtitle={`${faNum(data?.total ?? 0)} رزرو ثبت‌شده`} icon={<CalendarClock className="h-5 w-5" />} />
+      <PageHeader
+        title="رزرو مشاوره"
+        subtitle={`${faNum(data?.total ?? 0)} رزرو ثبت‌شده`}
+        icon={<CalendarClock className="h-5 w-5" />}
+        actions={
+          <Button className="brand-gradient gap-1.5 text-white" onClick={() => setNewOpen(true)}>
+            <CalendarPlus className="h-4 w-4" /> ثبت رزرو جدید
+          </Button>
+        }
+      />
 
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         {data?.byConsultant.slice(0, 4).map((c) => (
@@ -69,6 +81,8 @@ export function ReservesView() {
       <div className="rounded-2xl border bg-card shadow-sm">
         <DataTable columns={columns} rows={data?.reserves ?? []} loading={loading} emptyText="رزروی یافت نشد" />
       </div>
+
+      <NewReserveDialog open={newOpen} onClose={() => setNewOpen(false)} onSaved={refetch} />
     </div>
   );
 }

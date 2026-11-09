@@ -1,10 +1,11 @@
 "use client";
-// موارد حاد (EMS)
+// موارد حاد (EMS) — فهرست + ثبت مورد حاد جدید + بررسی کمیسیون
 import * as React from "react";
 import { PageHeader, FilterBar, DataTable, StatusBadge, NameAvatar, LoadingView, Column, StatCard } from "@/components/shared";
+import { NewAcuteDialog } from "@/components/record-dialogs";
 import { faNum, faMoney, jDate } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
-import { Siren, Search, ClipboardCheck, Banknote, AlertTriangle } from "lucide-react";
+import { Siren, Search, ClipboardCheck, Banknote, AlertTriangle, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -49,6 +50,7 @@ export function EmsView() {
   const [payStatus, setPayStatus] = React.useState("");
   const [amount, setAmount] = React.useState("");
   const [comment, setComment] = React.useState("");
+  const [newOpen, setNewOpen] = React.useState(false);
 
   const { data, loading, refetch } = useQuery<{
     total: number; totalPages: number; ems: EmsRow[];
@@ -114,7 +116,16 @@ export function EmsView() {
 
   return (
     <div>
-      <PageHeader title="موارد حاد" subtitle="مدیریت کیس‌های حاد، بررسی کمیسیون و پرداخت کمک‌هزینه" icon={<Siren className="h-5 w-5 text-rose-500" />} />
+      <PageHeader
+        title="موارد حاد"
+        subtitle="مدیریت کیس‌های حاد، بررسی کمیسیون و پرداخت کمک‌هزینه"
+        icon={<Siren className="h-5 w-5 text-rose-500" />}
+        actions={
+          <Button className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700" onClick={() => setNewOpen(true)}>
+            <Plus className="h-4 w-4" /> ثبت مورد حاد جدید
+          </Button>
+        }
+      />
 
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard title="کل موارد" value={faNum(data?.total ?? 0)} icon={<Siren className="h-5 w-5" />} tone="slate" />
@@ -177,6 +188,9 @@ export function EmsView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ثبت مورد حاد جدید — نسخهٔ ۶.۱۱ */}
+      <NewAcuteDialog open={newOpen} onClose={() => setNewOpen(false)} onSaved={refetch} />
     </div>
   );
 }

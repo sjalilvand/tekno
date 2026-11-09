@@ -104,6 +104,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     });
   } catch { /* بخش پیامک‌ها در دسترس نیست */ }
 
+  // پرسشنامه‌های پرشده برای این متقاضی (نسخهٔ ۶.۱۱)
+  let questionnaireRows: { id: number; title: string; createdAt: Date; data: Record<string, string> }[] = [];
+  try {
+    const subs = await db.formSubmission.findMany({
+      where: { userId: uid },
+      include: { form: { select: { title: true } } },
+      orderBy: { createdAt: "desc" }, take: 30,
+    });
+    questionnaireRows = subs.map((s) => ({
+      id: s.id, title: s.form.title, createdAt: s.createdAt,
+      data: JSON.parse(s.data || "{}") as Record<string, string>,
+    }));
+  } catch { /* بخش پرسشنامه‌ها در دسترس نیست */ }
+
   // خط زمانی سوابق اجرایی — ادغام همهٔ رخدادها و مرتب‌سازی
   type TimelineItem = { at: string; kind: string; title: string; detail?: string; ref?: string };
   const timeline: TimelineItem[] = [];
@@ -121,20 +135,24 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     if (e.status === "رد شده" && e.rejectedAt) timeline.push({ at: e.rejectedAt.toISOString(), kind: "رد", title: `رد جلسهٔ #${e.id}`, detail: e.rejectedComment ?? undefined });
   }
   for (const f of files) timeline.push({ at: f.uploadDateTime.toISOString(), kind: "سند", title: `بارگذاری سند: ${f.name}` });
+  for (const q of questionnaireRows) timeline.push({ at: q.createdAt.toISOString(), kind: "فرم", title: `پرسشنامه: ${q.title}` });
   for (const m of messages) timeline.push({ at: m.timestamp.toISOString(), kind: "پیام", title: `پیام: ${m.subject ?? "(بدون عنوان)"}`, detail: (m.text ?? "").slice(0, 100) });
   for (const s of sms) timeline.push({ at: s.createTime.toISOString(), kind: "پیامک", title: `پیامک (${s.status})`, detail: (s.message ?? "").slice(0, 100) });
   timeline.sort((a, b) => (a.at < b.at ? 1 : -1));
 
-  // توصیه‌های هوشمند
-  const recs = buildRecommendations({
-    events: events.map((e) => ({
-      ...e,
-      psychology: e.psychology ? [e.psychology] : [],
-      ems: e.ems.map((m) => ({ ...m, hadPaymentAmount: Number(m.hadPaymentAmount) })),
-    })),
-    reserves: events.flatMap((e) => e.reserves.map((r) => ({ id: r.id, date: r.date }))),
-    now: new Date(),
-  });
+  // توصیه‌های هوشمند — نسخهٔ ۶.۱۱: خطای دادهٔ خاص توصیه‌ها را خالی می‌کند، نه کل پرونده
+  let recs: ReturnType<typeof buildRecommendations> = [];
+  try {
+    recs = buildRecommendations({
+      events: events.map((e) => ({
+        ...e,
+        psychology: e.psychology ? [e.psychology] : [],
+        ems: e.ems.map((m) => ({ ...m, hadPaymentAmount: Number(m.hadPaymentAmount) })),
+      })),
+      reserves: events.flatMap((e) => e.reserves.map((r) => ({ id: r.id, date: r.date }))),
+      now: new Date(),
+    });
+  } catch { /* توصیه‌ها در دسترس نیست — بقیهٔ پرونده سالم می‌ماند */ }
 
   // آمار خلاصه
   const confirmed = events.filter((e) => e.status === "تایید نهایی");
@@ -143,9 +161,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const lastSession = events.map((e) => e.startDate).filter(Boolean).sort((a, b) => (b as Date).getTime() - (a as Date).getTime())[0] ?? null;
 
   // وضعیت چرخهٔ تایید آخرین جلسات (برای نوار پیشرفت در کارتابل)
-  const chainStatus = events.slice(0, 5).map((e) => ({
-    eventId: e.id, status: e.status, spans: chainSpans(e),
-  }));
+  // نسخهٔ ۶.۱۱ — هر بخش جدا در try/catch تا خطای دادهٔ خاص، کل پرونده را نیاندازد
+  const chainStatus = events.slice(0, 5).map((e) => {
+    try {
+      return { eventId: e.id, status: e.status, spans: chainSpans(e) };
+    } catch {
+      return { eventId: e.id, status: e.status, spans: [] };
+    }
+  });
 
   // تیک‌های هوشمند مرتبط با متقاضی
   let checklists: { id: number; title: string; status: string; items: { id: number; title: string; done: boolean; auto: boolean }[]; template: { title: string } | null }[] = [];
@@ -185,6 +208,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     timeline: timeline.slice(0, 120),
     files: files.map((f) => ({ ...f, uploadDateTime: jDate(f.uploadDateTime) })),
     recommendations: recs,
+    questionnaires: questionnaireRows.map((q) => ({ id: q.id, title: q.title, createdAt: jDate(q.createdAt), data: q.data })),
     checklists: checklists.map((r) => ({
       id: r.id, title: r.template?.title ?? r.title ?? "چک‌لیست", status: r.status,
       done: r.items.filter((i) => i.done).length, total: r.items.length,

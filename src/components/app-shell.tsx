@@ -245,16 +245,20 @@ function Brand({ collapsed, onCloseMobile }: { collapsed: boolean; onCloseMobile
 
 type NotifItem = { id: number; title: string; body: string | null; isRead: boolean; createdAt: string };
 
-/** بنر حالت نیابتی — مدیر با هویت کاربر دیگر در سامانه است */
+/** خروج از حالت نیابتی — مشترک بین بنر بالای صفحه و منوی کاربر (نسخهٔ ۶.۱۱) */
+export async function exitImpersonation() {
+  await api("/api/users/impersonate", { method: "DELETE" });
+  // نسخهٔ ۶.۱۰ — بازگشت مستقیم به کارتابلِ مدیر (نه صفحهٔ کاربران)
+  window.location.hash = "#/cartable";
+  window.location.reload();
+}
+
 function ActingBanner({ actorName }: { actorName: string }) {
   const [busy, setBusy] = React.useState(false);
   const exit = async () => {
     setBusy(true);
     try {
-      await api("/api/users/impersonate", { method: "DELETE" });
-      // نسخهٔ ۶.۱۰ — بازگشت مستقیم به کارتابلِ مدیر (نه صفحهٔ کاربران)
-      window.location.hash = "#/cartable";
-      window.location.reload();
+      await exitImpersonation();
     } catch { setBusy(false); }
   };
   return (
@@ -494,6 +498,20 @@ export function AppShell({
                   <p className="text-xs font-normal text-muted-foreground mt-0.5" dir="ltr">{user.username}</p>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {/* بازگشت به حساب مدیر — در منوی کاربر در حالت نیابتی (نسخهٔ ۶.۱۱) */}
+                {user.acting && (
+                  <>
+                    <DropdownMenuItem
+                      onClick={async () => {
+                        try { await exitImpersonation(); } catch { /* نادیده */ }
+                      }}
+                      className="gap-2 font-bold text-violet-600 focus:text-violet-700 dark:text-violet-400"
+                    >
+                      <ShieldCheck className="h-4 w-4" /> بازگشت به حساب مدیر
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem onClick={() => navigate("profile")} className="gap-2">
                   <UserRound className="h-4 w-4" /> پروفایل من
                 </DropdownMenuItem>

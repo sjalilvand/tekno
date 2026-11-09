@@ -373,6 +373,13 @@ export function applyEventScope<T extends { AND?: object[] }>(where: T, acc: Acc
   return where;
 }
 
+/** شرط اسکوپ برای مدل‌های فرزند جلسه (رزرو/مورد حاد/…) — از رابطهٔ «event»
+ *  نسخهٔ ۶.۱۱ — applyEventScope روی این مدل‌ها ستون‌های Event را مستقیم
+ *  می‌گذاشت و برای کاربران محدود (مشاور/مدیر استان/کلینیک) خطای ۵۰۰ می‌داد. */
+export function childEventScopeWhere(acc: AccessInfo): { event: Prisma.EventWhereInput } {
+  return { event: eventScopeWhere(acc) };
+}
+
 /** گارد عملیات — دسترسی مؤثر را برمی‌گرداند یا پاسخ خطای 403/401 می‌دهد */
 export async function guardAction(
   req: NextRequest,

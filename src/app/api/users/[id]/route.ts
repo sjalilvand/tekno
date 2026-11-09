@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { ok, fail, resolveAccess } from "@/lib/server";
+import { ok, fail, resolveAccess, hashPassword } from "@/lib/server";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const acc = await resolveAccess(req);
@@ -42,23 +42,78 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   if (!acc) return fail("UNAUTHORIZED", 401);
   const { id } = await ctx.params;
   const uid = Number(id);
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
 
-  // مسدودسازی/تایید — فقط مدیر؛ ویرایش پروفایل — مدیر یا خودِ کاربر
-  const sensitive = body.blocked !== undefined || body.confirm !== undefined;
-  if (!acc.isAdmin && (sensitive || acc.uid !== uid))
+  // مسدودسازی/تایید/ویرایش کامل — فقط مدیر؛ ویرایش محدود پروفایل — خودِ کاربر
+  const adminOnlyKeys = ["blocked", "confirm", "username", "nid", "password", "roleId", "centerIds", "consultantLevel"];
+  const isSensitive = adminOnlyKeys.some((k) => body[k] !== undefined);
+  if (!acc.isAdmin && (isSensitive || acc.uid !== uid))
     return fail("برای این تغییر باید مدیر سامانه باشید", 403);
+
+  const target = await db.user.findUnique({ where: { id: uid }, select: { id: true } });
+  if (!target) return fail("کاربر یافت نشد", 404);
 
   const data: Record<string, unknown> = {};
   if (typeof body.blocked === "boolean") data.blocked = body.blocked;
   if (typeof body.confirm === "number") data.confirm = body.confirm;
-  if (typeof body.name === "string" && body.name) data.name = body.name;
-  if (typeof body.family === "string" && body.family) data.family = body.family;
+  if (typeof body.name === "string" && body.name.trim()) data.name = body.name.trim();
+  if (typeof body.family === "string" && body.family.trim()) data.family = body.family.trim();
   if (typeof body.email === "string") data.email = body.email;
-  if (body.mobile) data.mobile = Number(body.mobile);
-  if (body.bio !== undefined) data.bio = body.bio;
+  if (body.bio !== undefined) data.bio = body.bio ? String(body.bio).slice(0, 1000) : null;
+  if (body.mobile) {
+    const m = String(body.mobile).replace(/\D/g, "");
+    if (m.length < 10) return fail("شماره موبایل نامعتبر است");
+    data.mobile = BigInt(m);
+  }
+  if (body.gender === "مرد" || body.gender === "زن") data.gender = body.gender;
+  if (body.provinceId !== undefined) data.provinceId = body.provinceId ? Number(body.provinceId) : null;
+
+  // ---------- بخش‌های مدیریتی ----------
+  if (body.username !== undefined) {
+    const un = String(body.username ?? "").trim();
+    if (!un) return fail("نام کاربری نمی‌تواند خالی باشد");
+    const dupe = await db.user.findFirst({ where: { username: un, id: { not: uid } }, select: { id: true } });
+    if (dupe) return fail("این نام کاربری قبلاً استفاده شده است");
+    data.username = un;
+  }
+  if (body.nid !== undefined) {
+    const nd = String(body.nid ?? "").replace(/\D/g, "");
+    if (nd.length < 8) return fail("کد ملی باید حداقل ۸ رقم باشد");
+    const dupe = await db.user.findFirst({ where: { nid: BigInt(nd), id: { not: uid } }, select: { id: true } });
+    if (dupe) return fail("این کد ملی قبلاً ثبت شده است");
+    data.nid = BigInt(nd);
+  }
+  if (body.password) {
+    const p = String(body.password);
+    if (p.length < 5) return fail("رمز عبور باید حداقل ۵ نویسه باشد");
+    data.passwordHash = hashPassword(p);
+    data.lastChangePass = new Date();
+  }
+  if (body.consultantLevel !== undefined)
+    data.consultantLevel = body.consultantLevel ? Number(body.consultantLevel) : null;
 
   const updated = await db.user.update({ where: { id: uid }, data });
+
+  // جایگزینی نقش — یک نقش فعال همزمان (مدیر)
+  if (body.roleId !== undefined) {
+    await db.userRole.deleteMany({ where: { userId: uid } });
+    if (body.roleId) {
+      const role = await db.role.findUnique({ where: { id: Number(body.roleId) }, select: { id: true } });
+      if (!role) return fail("نقش انتخاب‌شده یافت نشد");
+      await db.userRole.create({ data: { userId: uid, roleId: role.id, addedBy: acc.uid } });
+    }
+  }
+  // جایگزینی کلینیک‌های همکاری (مدیر)
+  if (Array.isArray(body.centerIds)) {
+    const cids = body.centerIds.map(Number).filter(Boolean);
+    await db.userCenter.deleteMany({ where: { userId: uid } });
+    if (cids.length) {
+      const found = await db.center.count({ where: { id: { in: cids } } });
+      if (found !== cids.length) return fail("یکی از مراکز انتخاب‌شده یافت نشد");
+      await db.userCenter.createMany({ data: cids.map((cid, i) => ({ userId: uid, centerId: cid, isPrimary: i === 0 })) });
+    }
+  }
+
   await db.log.create({
     data: { userId: acc.uid, category: "ویرایش کاربر", description: `ویرایش پرونده کاربر #${uid}`, level: 2, ip: req.headers.get("x-forwarded-for") ?? "-" },
   });

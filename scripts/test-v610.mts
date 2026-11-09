@@ -48,6 +48,9 @@ async function main() {
   await db.session.deleteMany();
   await db.eventReserve.deleteMany();
   await db.eventsEms.deleteMany();
+  await db.eventComment.deleteMany();
+  await db.formSubmission.deleteMany();
+  await db.formDefinition.deleteMany();
   await db.event.deleteMany();
   await db.userCenter.deleteMany();
   await db.userRole.deleteMany();
