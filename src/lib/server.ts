@@ -137,15 +137,46 @@ export async function activeRolesOf(userId: number) {
   });
 }
 
-/** آیا این کاربر مدیر است؟ (عنوان نقش یا کلید "*" در ماتریس) */
+// ------------------------------------------------------------------
+// تشخیص مدیر — نسخهٔ ۶.۶ (سه لایه):
+//   ۱) نقش فعال با عنوان مدیریتی یا کلید "*" در ماتریس دسترسی
+//   ۲) مشخصات خودِ کاربر — حساب‌های قدیمی که «مدیر سامانه» در نام یا
+//      نام‌خانوادگی‌شان است و هیچ رکورد نقشی ندارند
+//   ۳) اگر جدول نقش‌ها به‌کلی خالی باشد، اولین کاربر سامانه = مدیر
+// ------------------------------------------------------------------
+
+/** الگوی سخت‌گیرانه برای مشخصات شخصی — «مدیری»/«مدیرزاده» مدیر حساب نمی‌شوند */
+const ADMIN_SELF_RE = /مدیر\s*(سامانه|سیستم|کل|ارشد|فنی|عامل)|sysadmin|superuser|administrator|^admin$/i;
+
+/** آیا نام/نام‌خانوادگی/نام‌کاربری خودِ کاربر نشانهٔ مدیر بودن است؟ */
+export function selfAdminSignal(u: { name?: string | null; family?: string | null; username?: string | null }): boolean {
+  const hay = `${u.name ?? ""} ${u.family ?? ""}`.trim();
+  if (hay && ADMIN_SELF_RE.test(hay)) return true;
+  return /^(admin|administrator|sysadmin|root)$/i.test((u.username ?? "").trim());
+}
+
+/** در پایگاه‌های قدیمی بدون هیچ نقشی، اولین کاربر (کوچک‌ترین id) مدیر است */
+async function legacyFirstAdminId(): Promise<number | null> {
+  const count = await db.userRole.count();
+  if (count > 0) return null;
+  const first = await db.user.findFirst({ orderBy: { id: "asc" }, select: { id: true } });
+  return first?.id ?? null;
+}
+
+/** آیا این کاربر مدیر است؟ (نقش، مشخصات شخصی یا جانشین اولین کاربر) */
 export async function isAdminUser(userId: number): Promise<boolean> {
   const urs = await activeRolesOf(userId);
-  return urs.some(
+  const roleAdmin = urs.some(
     (ur) =>
       ADMIN_TITLE_RE.test(ur.role?.title ?? "") ||
       FULL_ACCESS_ROLES.some((f) => (ur.role?.title ?? "").includes(f)) ||
       (parseRolePermissions((ur.role as { permissions?: string | null })?.permissions ?? null)?.includes("*") ?? false)
   );
+  if (roleAdmin) return true;
+  const u = await db.user.findUnique({ where: { id: userId }, select: { name: true, family: true, username: true } });
+  if (u && selfAdminSignal(u)) return true;
+  const firstId = await legacyFirstAdminId();
+  return firstId !== null && firstId === userId;
 }
 
 /** حل کامل دسترسی درخواست — هویت مؤثر + نقش‌ها + ماتریس + اسکوپ داده */
@@ -163,7 +194,9 @@ export async function resolveAccess(req: NextRequest): Promise<AccessInfo | null
   const permLists = urs.map((ur) => parseRolePermissions((ur.role as { permissions?: string | null })?.permissions ?? null));
   const isFull =
     titles.some((t) => FULL_ACCESS_ROLES.some((f) => t.includes(f)) || ADMIN_TITLE_RE.test(t)) ||
-    permLists.some((p) => p?.includes("*"));
+    permLists.some((p) => p?.includes("*")) ||
+    selfAdminSignal(user) ||
+    (await legacyFirstAdminId()) === user.id;
   const perms: string[] | null = isFull ? ["*"] : permLists.some((p) => p === null) ? null : [...new Set(permLists.flat())];
   const isAdmin = isFull;
   const isCounselor = !isAdmin && titles.some((t) => COUNSELOR_TITLE_RE.test(t));

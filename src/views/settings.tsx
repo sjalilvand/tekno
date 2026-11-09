@@ -16,7 +16,7 @@ type SessionRow = { id: string; ip: string | null; browser: string | null; dateT
 
 type DbInfo = {
   engine: string;
-  current: { engine: string; host: string; port: string; database: string; user: string; password: string } | null;
+  current: { engine: string; host: string; port: string; database: string; user: string; password: string; hasPassword?: boolean } | null;
   urlMasked: string;
   live: { ok: boolean; message: string; version?: string; latencyMs?: number; tablesCount?: number };
   envFile: boolean;
@@ -30,6 +30,17 @@ function DatabaseConnectionCard() {
   const [saving, setSaving] = React.useState(false);
   const [testResult, setTestResult] = React.useState<{ ok: boolean; message: string; version?: string; latencyMs?: number } | null>(null);
   const [savedInfo, setSavedInfo] = React.useState<string | null>(null);
+  const [revealed, setRevealed] = React.useState<{ password: string; hasPassword: boolean } | null>(null);
+
+  const reveal = async () => {
+    try {
+      const r = await api<{ password: string; hasPassword: boolean }>("/api/database", { method: "POST", body: JSON.stringify({ action: "reveal" }) });
+      setRevealed(r);
+      if (!r.hasPassword) toast({ title: "این اتصال رمز عبور ندارد — کاربر بدون رمز تعریف شده است" });
+    } catch (e: any) {
+      toast({ title: e?.message ?? "خطا در نمایش رمز", variant: "destructive" as never });
+    }
+  };
 
   React.useEffect(() => {
     if (data?.current && data.engine === "mysql") {
@@ -95,6 +106,23 @@ function DatabaseConnectionCard() {
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={refetch} aria-label="بازبینی"><RefreshCw className="h-3.5 w-3.5" /></Button>
         </div>
         <p className="mt-2 truncate text-[11px] text-muted-foreground" dir="ltr">{data?.urlMasked}</p>
+        {/* رمز اتصال جاری — فقط مدیر می‌تواند ببیند (۶.۶) */}
+        <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+          <KeyRound className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-bold text-muted-foreground">رمز عبور اتصال جاری:</span>
+          {revealed ? (
+            <span dir="ltr" className="rounded bg-muted px-2 py-0.5 font-mono font-bold text-foreground">
+              {revealed.hasPassword ? revealed.password : "(بدون رمز عبور)"}
+            </span>
+          ) : (
+            <>
+              <span dir="ltr" className="font-mono text-muted-foreground">{data?.current?.hasPassword ? "••••••••" : "(بدون رمز عبور)"}</span>
+              <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-[10.5px]" onClick={reveal}>
+                <KeyRound className="h-3 w-3" /> نمایش رمز
+              </Button>
+            </>
+          )}
+        </p>
       </div>
 
       {/* فرم اتصال جدید */}
@@ -150,7 +178,7 @@ function DatabaseConnectionCard() {
           </div>
         )}
         <p className="mt-3 text-[10.5px] leading-5 text-muted-foreground">
-          نکته: ذخیرهٔ اتصال فقط فایل <code dir="ltr">.env</code> را تغییر می‌دهد؛ تا پیش از اجرای مجدد سامانه، اتصال فعلی تغییر نمی‌کند. رمز عبور هرگز ذخیره یا نمایش داده نمی‌شود.
+          نکته: ذخیرهٔ اتصال فقط فایل <code dir="ltr">.env</code> را تغییر می‌دهد؛ تا پیش از اجرای مجدد سامانه، اتصال فعلی تغییر نمی‌کند. رمز عبور فقط در فایل .env نگه‌داری می‌شود و مدیر سامانه می‌تواند آن را با دکمهٔ «نمایش رمز» ببیند.
         </p>
       </div>
     </SectionCard>

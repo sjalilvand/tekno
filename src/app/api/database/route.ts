@@ -2,15 +2,17 @@ import { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, guardAdmin } from "@/lib/server";
 import { dbProvider } from "@/lib/analytics";
 
 // =====================================================================
 // اتصال پایگاه داده — نمایش وضعیت، تست اتصال جدید و ذخیره در .env
 // • GET:  اطلاعات اتصال فعلی (رمز پوشانده می‌شود) + تست زنده + نسخهٔ سرور
-// • POST {action:"test"}  : تست اتصال با پارامترهای داده‌شده (بدون ذخیره)
-// • POST {action:"save"}  : نوشتن DATABASE_URL در فایل .env + راهنمای اجرای مجدد
-// فقط مدیر سامانه مجاز است.
+// • POST {action:"test"}   : تست اتصال با پارامترهای داده‌شده (بدون ذخیره)
+// • POST {action:"save"}   : نوشتن DATABASE_URL در فایل .env + راهنمای اجرای مجدد
+// • POST {action:"reveal"} : نمایش رمز واقعی اتصال جاری (فقط مدیر) — نسخهٔ ۶.۶
+// تشخیص مدیر با همان موتور یکپارچهٔ سامانه (guardAdmin) — نسخهٔ ۶.۶:
+// نقش مدیریتی، یا «مدیر سامانه» در نام/نام‌خانوادگی، یا اولین کاربر سامانه
 // =====================================================================
 
 type ParsedUrl = { engine: string; host: string; port: string; database: string; user: string; password: string };
@@ -36,13 +38,11 @@ function mask(v: string): string {
   return v.length <= 2 ? "••" : v.slice(0, 2) + "••••••";
 }
 
-async function isAdmin(req: NextRequest): Promise<boolean> {
-  const user = await getCurrentUser(req);
-  if (!user) return false;
-  // نقش‌ها از جدول UserRole — نقش‌های مدیریتی: مدیر سامانه / مدیر / ادمین
-  const urs = await db.userRole.findMany({ where: { userId: user.id }, include: { role: { select: { title: true } } } });
-  const titles = urs.map((ur) => ur.role?.title ?? "");
-  return titles.some((t) => t.includes("مدیر سامانه") || t.includes("مدیر سیستم") || t === "ادمین" || t.includes("admin"));
+/** نمایش امن URL با رمز پوشانده — اگر رمز خالی باشد بخش رمز حذف می‌شود */
+function maskedUrl(p: ParsedUrl): string {
+  if (p.engine === "file" || p.engine === "sqlite") return `file:/${p.database}`;
+  const auth = p.password ? `${p.user}:${mask(p.password)}` : p.user;
+  return `${p.engine}://${auth}@${p.host}:${p.port}/${p.database}`;
 }
 
 async function testMysql(host: string, port: string | number, user: string, password: string, database: string): Promise<{ ok: boolean; message: string; version?: string; latencyMs?: number; tablesCount?: number }> {
@@ -74,7 +74,8 @@ async function testMysql(host: string, port: string | number, user: string, pass
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await isAdmin(req))) return fail("فقط مدیر سامانه به این بخش دسترسی دارد", 403);
+  const g = await guardAdmin(req);
+  if (g.error) return g.error;
   const url = process.env.DATABASE_URL ?? "";
   const parsed = parseDbUrl(url);
   const provider = dbProvider();
@@ -90,20 +91,33 @@ export async function GET(req: NextRequest) {
   }
   return ok({
     engine: provider,
-    current: parsed ? { ...parsed, password: mask(parsed.password) } : null,
-    urlMasked: parsed ? `${parsed.engine}://${parsed.user}:${mask(parsed.password)}@${parsed.host}:${parsed.port}/${parsed.database}` : url ? "(نامعتبر)" : "(تنظیم نشده)",
+    current: parsed ? { ...parsed, password: mask(parsed.password), hasPassword: Boolean(parsed.password) } : null,
+    urlMasked: parsed ? maskedUrl(parsed) : url ? "(نامعتبر)" : "(تنظیم نشده)",
     live,
     envFile: fs.existsSync(path.join(process.cwd(), ".env")),
   });
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await isAdmin(req))) return fail("فقط مدیر سامانه به این بخش دسترسی دارد", 403);
+  const g = await guardAdmin(req);
+  if (g.error) return g.error;
   let body: { action?: string; engine?: string; host?: string; port?: string; database?: string; user?: string; password?: string };
   try {
     body = await req.json();
   } catch {
     return fail("BAD_REQUEST");
+  }
+
+  // نمایش رمز واقعی اتصال جاری — فقط مدیر (درخواست نسخهٔ ۶.۶)
+  if (body.action === "reveal") {
+    const url = process.env.DATABASE_URL ?? "";
+    const parsed = parseDbUrl(url);
+    return ok({
+      password: parsed?.password ?? "",
+      hasPassword: Boolean(parsed?.password),
+      user: parsed?.user ?? "",
+      url,
+    });
   }
 
   const host = String(body.host ?? "127.0.0.1").trim();
