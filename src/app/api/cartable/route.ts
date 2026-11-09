@@ -41,11 +41,17 @@ export async function GET(req: NextRequest) {
   }
 
   const scopeWhere = scopeIds ? { id: { in: scopeIds } } : {};
+  // نسخهٔ ۶.۸ — فقط متقاضیان واقعی: کاربرانی که حداقل یک جلسه به‌عنوان مراجع
+  // دارند؛ دیگر حساب مشاوران/منشی/مدیران در فهرست کارتابل نمی‌آید.
+  // (در حالت اسکوپ مشاور، خودِ مشاور هم برای کارتابل شخصی‌اش می‌ماند)
+  const applicantOnly = scopeIds
+    ? { OR: [{ eventsAsClient: { some: {} } }, { id: acc.uid }] }
+    : { eventsAsClient: { some: {} } };
 
   if (!q) {
     // فهرست همهٔ متقاضیان مجاز — جدیدترین‌ها اول
     const rows = await db.user.findMany({
-      where: scopeWhere,
+      where: { AND: [scopeWhere, applicantOnly] },
       select: userSelect,
       orderBy: [{ signupDate: "desc" }],
       take: 60,
@@ -57,6 +63,7 @@ export async function GET(req: NextRequest) {
     where: {
       AND: [
         scopeWhere,
+        applicantOnly,
         {
           OR: [
             { name: { contains: q } },
