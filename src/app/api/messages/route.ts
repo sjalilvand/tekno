@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { getCurrentUser, ok, fail, guardAction } from "@/lib/server";
 
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser(req);
@@ -24,8 +24,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  // سطح دسترسی عملیاتی — ارسال پیام = ثبت (نسخهٔ ۶.۵)
+  const g = await guardAction(req, "messages", "create", "پیام‌های داخلی");
+  if (g.error) return g.error;
+  const user = g.acc.user;
   const { toUserId, subject, text } = await req.json();
   if (!text?.trim() || !toUserId) return fail("گیرنده و متن پیام الزامی است");
   const msg = await db.message.create({

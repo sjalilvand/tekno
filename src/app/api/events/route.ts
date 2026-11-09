@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail, params } from "@/lib/server";
+import { ok, fail, params, resolveAccess, applyEventScope } from "@/lib/server";
 import type { Prisma } from "@prisma/client";
 
 const selectEvent = {
@@ -13,12 +13,13 @@ const selectEvent = {
 } as const;
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
   const { q, status, serviceId, centerId, page, pageSize } = params(req);
   const view = req.nextUrl.searchParams.get("view") ?? "all"; // all | pending | done | rejected | undone
 
-  const where: Prisma.EventWhereInput = {};
+  // اسکوپ مشاور — فقط جلسات خودش (مشاور/ناظر)؛ با AND تا جستجو دورش نزند
+  const where: Prisma.EventWhereInput = applyEventScope({}, acc);
   if (status) where.status = status;
   else if (view === "pending") where.status = { contains: "در انتظار" };
   else if (view === "done") where.status = "تایید نهایی";

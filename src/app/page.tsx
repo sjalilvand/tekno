@@ -35,7 +35,7 @@ import { WebServicesView } from "@/views/webservices";
 import { BackupView } from "@/views/backup";
 import { HelpsView } from "@/views/helps";
 import { ProfileView } from "@/views/profile";
-import { api, useHashRoute } from "@/lib/client";
+import { api, useHashRouteFull } from "@/lib/client";
 import { Loader2, Flower2 } from "lucide-react";
 
 export default function Page() {
@@ -89,7 +89,9 @@ function ShellWithRouter({
   unread: number;
   refreshMe: () => Promise<{ user: MetaUser; unread: number } | null>;
 }) {
-  const route = useHashRoute();
+  // مسیر کامل با کوئری — تغییر «?u=...» هم رندر مجدد می‌دهد تا لینک‌های کارتابل همیشه درست باز شوند
+  const fullRoute = useHashRouteFull();
+  const route = fullRoute.split("?")[0];
 
   const view = React.useMemo(() => {
     switch (route) {
@@ -130,7 +132,8 @@ function ShellWithRouter({
 
   return (
     <AppShell user={user} unread={unread} badges={{}}>
-      <div key={route} className="view-in">{view}</div>
+      {/* کلید شامل کوئری — باز کردن «cartable?u=5» بعد از «cartable?u=8» کامپوننت را از نو سوار می‌کند */}
+      <div key={fullRoute} className="view-in">{view}</div>
     </AppShell>
   );
 }

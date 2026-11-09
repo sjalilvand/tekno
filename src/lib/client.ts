@@ -22,6 +22,12 @@ export function currentRoute(): string {
   return h.split("?")[0] || "dashboard";
 }
 
+/** مسیر کامل با کوئری — مثلا «cartable?u=5» — برای رندر مجدد هنگام تغییر لینک‌های عمیق */
+export function currentRouteFull(): string {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  return h || "dashboard";
+}
+
 export function navigate(route: string) {
   window.location.hash = `#/${route}`;
 }
@@ -32,6 +38,18 @@ export function useHashRoute(): string {
   const [route, setRoute] = useState<string>("dashboard");
   useEffect(() => {
     const onChange = () => setRoute(currentRoute());
+    onChange();
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return route;
+}
+
+/** مثل useHashRoute ولی شامل کوئری — هر تغییر «?u=...» هم رندر مجدد می‌دهد */
+export function useHashRouteFull(): string {
+  const [route, setRoute] = useState<string>("dashboard");
+  useEffect(() => {
+    const onChange = () => setRoute(currentRouteFull());
     onChange();
     window.addEventListener("hashchange", onChange);
     return () => window.removeEventListener("hashchange", onChange);

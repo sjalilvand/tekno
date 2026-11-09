@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, resolveAccess, guardAction } from "@/lib/server";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
   const { id } = await ctx.params;
   const eid = Number(id);
 
@@ -27,6 +27,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   });
   if (!event) return fail("جلسه یافت نشد", 404);
 
+  // اسکوپ مشاور — فقط جلسات خودش
+  if (!acc.seeAllData && event.acceptorId !== acc.uid && event.supervisorId !== acc.uid && event.userId !== acc.uid)
+    return fail("این جلسه در پروندهٔ شما نیست", 403);
+
   // findFirst — eventId دیگر یونیک نیست (در دادهٔ legacy چند فرم EMS برای یک جلسه ثبت شده)
   const ems = await db.eventsEms.findFirst({ where: { eventId: eid }, include: { comments: true } });
   // روابط نوروفیدبک/نقشهٔ سر یک‌به‌چند شدند — برای حفظ شکل پاسخ، اولین فرم برگردانده می‌شود
@@ -36,12 +40,17 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
   const { id } = await ctx.params;
   const eid = Number(id);
-  const { action, comment } = await req.json();
+  const body = await req.json().catch(() => ({}));
+  const { action, comment } = body;
   const now = new Date();
+
+  // سطح دسترسی عملیاتی — یادداشت = ثبت، تایید/رد = ویرایش (نسخهٔ ۶.۵)
+  const g = await guardAction(req, "events", action === "comment" ? "create" : "edit", "جلسات مشاوره");
+  if (g.error) return g.error;
+  const user = g.acc.user;
+  const acc = g.acc;
 
   const event = await db.event.findUnique({ where: { id: eid } });
   if (!event) return fail("جلسه یافت نشد", 404);
@@ -66,9 +75,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   if (action === "confirm") {
     // طی کردن مرحله بعدی زنجیره تایید بر اساس نقش کاربر جاری
-    const roleTitles = await db.userRole.findMany({ where: { userId: user.id }, include: { role: true } });
-    const titles = roleTitles.map((r) => r.role.title);
-    const isAdmin = titles.includes("مدیر سیستم") || titles.includes("مدیر کل");
+    const isAdmin = acc.isAdmin;
+    const titles = acc.roles;
     const data: Record<string, unknown> = {};
     if (isAdmin) {
       data.centerAdminConfirmUserId = user.id;

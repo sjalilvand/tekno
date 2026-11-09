@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail, params } from "@/lib/server";
+import { getCurrentUser, ok, fail, params, guardAction } from "@/lib/server";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
@@ -30,8 +30,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  // سطح دسترسی عملیاتی — ارسال پیامک = ثبت (نسخهٔ ۶.۵)
+  const g = await guardAction(req, "sms", "create", "پیامک‌ها");
+  if (g.error) return g.error;
+  const user = g.acc.user;
   const { message, targetRole, targetProvinceId } = await req.json();
   if (!message?.trim()) return fail("متن پیامک الزامی است");
 

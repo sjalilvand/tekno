@@ -10,10 +10,11 @@ import * as React from "react";
 import { PageHeader, SectionCard, StatCard, LoadingView, NameAvatar } from "@/components/shared";
 import { faNum, faDigits, jDate } from "@/lib/jalali";
 import { api, navigate, useQuery } from "@/lib/client";
-import { PERM_MODULES, PERM_GROUPS, PERM_PRESETS } from "@/lib/permissions";
+import { PERM_MODULES, PERM_GROUPS, PERM_PRESETS, PERM_ACTIONS, SCOPE_ALL, isActionStyle, toActionStyle, type PermAction } from "@/lib/permissions";
 import {
   ShieldCheck, Search, Plus, Trash2, Ban, CheckCircle2, Users, Layers, KeyRound,
   FolderOpen, Pencil, Sparkles, Grid3X3, RotateCcw, Save, Loader2, UserCheck, Clock,
+  LogIn, Eye, Globe2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,13 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 type RoleRow = { id: number; title: string; codeName: string; permissions: string | null; _count: { users: number } };
+
+/** رنگ چیپ‌های عملیات در ماتریس */
+const ACTION_TONE: Record<string, string> = {
+  cyan: "border-cyan-300 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300",
+  amber: "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+  rose: "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300",
+};
 
 type EmptyProps = { icon: React.ReactNode; title: string; subtitle?: string };
 function EmptyState({ icon, title, subtitle }: EmptyProps) {
@@ -110,6 +118,19 @@ function UsersRolesTab() {
     refetch();
   };
 
+  // ورود نیابتی — مدیر بدون رمز وارد حساب این کاربر می‌شود و کارتابلش را می‌بیند
+  const enterAs = async (ur: UserRoleRow) => {
+    if (!confirm(`وارد حساب «${ur.user.name} ${ur.user.family}» می‌شوید؟ کارتابل و داده‌ها از نگاه او نمایش داده می‌شود.`)) return;
+    try {
+      await api("/api/users/impersonate", { method: "POST", body: JSON.stringify({ userId: ur.user.id }) });
+      toast({ title: `وارد حساب ${ur.user.name} ${ur.user.family} شدید` });
+      window.location.hash = "#/cartable";
+      window.location.reload();
+    } catch (e) {
+      toast({ title: (e as Error).message, variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -160,8 +181,16 @@ function UsersRolesTab() {
                 </div>
                 <div className="flex shrink-0 flex-col gap-1.5">
                   <div className="flex gap-1">
-                    <Button size="icon" variant="ghost" className="h-8 w-8" title="کارتابل کاربر" onClick={() => navigate(`cartable?u=${ur.user.id}`)}>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" title="مشاهدهٔ پروندهٔ کاربر" onClick={() => navigate(`cartable?u=${ur.user.id}`)}>
                       <FolderOpen className="h-4 w-4 text-emerald-600" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      className="h-8 w-8 brand-gradient text-white"
+                      title="ورود به حساب این کاربر بدون رمز — کارتابل و داده‌ها از نگاه او"
+                      onClick={() => enterAs(ur)}
+                    >
+                      <LogIn className="h-4 w-4" />
                     </Button>
                     <Button size="icon" variant="ghost" className="h-8 w-8" title={ur.isSuspended ? "رفع تعلیق" : "تعلیق نقش"} onClick={() => toggleSuspend(ur)}>
                       <Ban className={cn("h-4 w-4", ur.isSuspended ? "text-amber-500" : "text-muted-foreground")} />
@@ -385,19 +414,41 @@ function MatrixTab() {
 
   const toggle = (key: string) => {
     if (perms === null) return; // حالت legacy — ابتدا باید شروع به محدودسازی کنید
-    setPerms((p) => (p!.includes(key) ? p!.filter((x) => x !== key) : [...p!, key]));
+    setPerms((p) => {
+      const cur = p!;
+      if (!cur.includes(key)) return [...cur, key];
+      // خاموش کردن «دیدن» — کل ماژول و همهٔ عملیات‌هایش حذف می‌شود
+      return cur.filter((x) => x !== key && !x.startsWith(`${key}:`));
+    });
+    setDirty(true);
+  };
+
+  const toggleAction = (key: string, action: PermAction) => {
+    if (perms === null) return;
+    const akey = `${key}:${action}`;
+    setPerms((p) => {
+      // قالب قدیمی → اول به قالب عملیاتی گسترش می‌یابد (ماژول‌های فعلی = همهٔ عملیات)
+      let cur = toActionStyle(p!);
+      if (action !== "view" && !cur.includes(key)) cur = [...cur, key]; // عملیات بدون دیدن بی‌معناست
+      if (cur.includes(akey)) return cur.filter((x) => x !== akey);
+      return [...cur, akey];
+    });
     setDirty(true);
   };
 
   const applyPreset = (pkey: string) => {
     const p = PERM_PRESETS.find((x) => x.key === pkey);
     if (!p) return;
-    setPerms(p.modules);
+    setPerms(p.modules.includes("*") ? ["*"] : toActionStyle(p.modules));
     setDirty(true);
   };
 
   const setAll = (value: boolean) => {
-    setPerms(value ? PERM_MODULES.map((m) => m.key) : []);
+    if (value) {
+      const full: string[] = [];
+      for (const m of PERM_MODULES) full.push(m.key, `${m.key}:create`, `${m.key}:edit`, `${m.key}:delete`);
+      setPerms(full);
+    } else setPerms([]);
     setDirty(true);
   };
 
@@ -458,8 +509,32 @@ function MatrixTab() {
         </div>
         {isLegacy && (
           <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">
-            این نقش در حالت «دسترسی کامل قدیمی» است و به همهٔ ماژول‌ها دسترسی دارد. برای محدودسازی، یکی از پیش‌تنظیم‌ها را اعمال کنید یا اولین ماژول را فعال کنید.
+            این نقش در حالت «دسترسی کامل قدیمی» است و به همهٔ ماژول‌ها و عملیات‌ها دسترسی دارد. برای محدودسازی، یکی از پیش‌تنظیم‌ها را اعمال کنید یا اولین ماژول را فعال کنید.
           </p>
+        )}
+        {!isLegacy && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1.5 rounded-xl border border-dashed border-cyan-300 bg-cyan-50/60 px-3 py-1.5 dark:border-cyan-800 dark:bg-cyan-950/30">
+              <Globe2 className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-300" />
+              <span className="text-[11px] font-bold text-cyan-800 dark:text-cyan-200">مشاهدهٔ همهٔ داده‌ها (حتی خارج از مراجعان خود)</span>
+              <Switch checked={perms!.includes(SCOPE_ALL)} onCheckedChange={() => toggle(SCOPE_ALL)} />
+            </span>
+            <span className="text-[10.5px] leading-4 text-muted-foreground">
+              نقش‌های مشاور فقط مراجعان خودشان را می‌بینند؛ با این کلید، همهٔ داده‌ها باز می‌شود.
+            </span>
+          </div>
+        )}
+        {!isLegacy && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+            <span className="font-bold">راهنمای عملیات در هر ماژول:</span>
+            {PERM_ACTIONS.map((a) => (
+              <span key={a.key} className="flex items-center gap-1">
+                <span className={cn("inline-block h-2 w-2 rounded-full", a.key === "view" ? "bg-emerald-500" : a.key === "create" ? "bg-cyan-500" : a.key === "edit" ? "bg-amber-500" : "bg-rose-500")} />
+                {a.label}
+              </span>
+            ))}
+            <span>— سوییچ هر ماژول = «دیدن»؛ چیپ‌های رنگی = عملیات جداگانه</span>
+          </div>
         )}
       </SectionCard>
 
@@ -480,13 +555,36 @@ function MatrixTab() {
                 {mods.map((m) => {
                   const checked = isLegacy ? true : perms!.includes(m.key);
                   return (
-                    <label key={m.key} className="flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 transition-colors hover:bg-muted/60">
-                      <span className="flex items-center gap-2 text-[12px] font-medium">
-                        <span className={cn("h-2 w-2 rounded-full", checked ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-700")} />
-                        {m.label}
-                      </span>
-                      <Switch checked={checked} onCheckedChange={() => toggle(m.key)} />
-                    </label>
+                    <div key={m.key} className="rounded-xl px-3 py-2 transition-colors hover:bg-muted/60">
+                      <label className="flex cursor-pointer items-center justify-between gap-2">
+                        <span className="flex items-center gap-2 text-[12px] font-medium">
+                          <span className={cn("h-2 w-2 rounded-full", checked ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-700")} />
+                          {m.label}
+                        </span>
+                        <Switch checked={checked} onCheckedChange={() => toggle(m.key)} />
+                      </label>
+                      {checked && !isLegacy && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {PERM_ACTIONS.filter((a) => a.key !== "view").map((a) => {
+                            const akey = `${m.key}:${a.key}`;
+                            const on = perms!.includes(akey);
+                            return (
+                              <button
+                                key={a.key}
+                                onClick={() => toggleAction(m.key, a.key as PermAction)}
+                                className={cn(
+                                  "flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] font-bold transition-all",
+                                  on ? ACTION_TONE[a.tone] : "border-dashed border-border text-muted-foreground hover:border-ring hover:text-foreground"
+                                )}
+                              >
+                                {on ? <CheckCircle2 className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                                {a.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>

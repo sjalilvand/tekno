@@ -1,12 +1,15 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, resolveAccess } from "@/lib/server";
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
   const { id } = await ctx.params;
   const uid = Number(id);
+
+  // پروندهٔ کامل کاربر — فقط مدیر یا خودِ کاربر
+  if (!acc.isAdmin && acc.uid !== uid) return fail("دسترسی به پروندهٔ این کاربر برای شما باز نیست", 403);
 
   const target = await db.user.findUnique({
     where: { id: uid },
@@ -35,10 +38,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 }
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
   const { id } = await ctx.params;
+  const uid = Number(id);
   const body = await req.json();
+
+  // مسدودسازی/تایید — فقط مدیر؛ ویرایش پروفایل — مدیر یا خودِ کاربر
+  const sensitive = body.blocked !== undefined || body.confirm !== undefined;
+  if (!acc.isAdmin && (sensitive || acc.uid !== uid))
+    return fail("برای این تغییر باید مدیر سامانه باشید", 403);
 
   const data: Record<string, unknown> = {};
   if (typeof body.blocked === "boolean") data.blocked = body.blocked;
@@ -49,9 +58,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   if (body.mobile) data.mobile = Number(body.mobile);
   if (body.bio !== undefined) data.bio = body.bio;
 
-  const updated = await db.user.update({ where: { id: Number(id) }, data });
+  const updated = await db.user.update({ where: { id: uid }, data });
   await db.log.create({
-    data: { userId: user.id, category: "ویرایش کاربر", description: `ویرایش پرونده کاربر #${id}`, level: 2, ip: req.headers.get("x-forwarded-for") ?? "-" },
+    data: { userId: acc.uid, category: "ویرایش کاربر", description: `ویرایش پرونده کاربر #${uid}`, level: 2, ip: req.headers.get("x-forwarded-for") ?? "-" },
   });
   return ok({ id: updated.id });
 }

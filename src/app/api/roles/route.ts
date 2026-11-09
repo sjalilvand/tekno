@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail, safeJson } from "@/lib/server";
+import { getCurrentUser, ok, fail, safeJson, guardAdmin } from "@/lib/server";
 
 // =====================================================================
 // نقش‌ها و سطوح دسترسی — مدیریت کامل RBAC
@@ -16,10 +16,14 @@ async function isAdmin(req: NextRequest) {
   if (!user) return null;
   const urs = await db.userRole.findMany({
     where: { userId: user.id, isSuspended: false },
-    include: { role: { select: { title: true } } },
+    include: { role: { select: { title: true, permissions: true } } },
   });
   const joined = urs.map((u) => u.role?.title ?? "").join("|");
-  if (/مدیر سامانه|مدیر سیستم|مدیر کل|admin/i.test(joined)) return user;
+  // مدیر = عنوان مدیریتی یا کلید "*" در ماتریس دسترسی (نسخهٔ ۶.۵)
+  if (/مدیر سامانه|مدیر سیستم|مدیر کل|مدیر مرکز|مدیر کلینیک|admin|superuser/i.test(joined)) return user;
+  if (urs.some((u) => {
+    try { const p = u.role?.permissions ? JSON.parse(u.role.permissions) : null; return Array.isArray(p) && p.includes("*"); } catch { return false; }
+  })) return user;
   return null;
 }
 
@@ -111,8 +115,9 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  // تعلیق/رفع تعلیق انتساب نقش — فقط مدیر (نسخهٔ ۶.۵)
+  const g = await guardAdmin(req);
+  if (g.error) return g.error;
   const { id, isSuspended } = await req.json();
   if (!id) return fail("شناسه الزامی است");
   await db.userRole.update({ where: { id: Number(id) }, data: { isSuspended: Boolean(isSuspended) } });

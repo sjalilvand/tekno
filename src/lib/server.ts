@@ -2,6 +2,11 @@
 import { db } from "@/lib/db";
 import { scryptSync, randomBytes, timingSafeEqual, createHash } from "crypto";
 import { NextRequest } from "next/server";
+import type { Prisma } from "@prisma/client";
+import {
+  parseRolePermissions, FULL_ACCESS_ROLES, ADMIN_TITLE_RE, COUNSELOR_TITLE_RE,
+  hasPermission, canAction, actionLabel, SCOPE_ALL, type PermAction,
+} from "@/lib/permissions";
 
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -61,13 +66,32 @@ export function getSessionToken(req: NextRequest): string | null {
   return req.cookies.get(SESSION_COOKIE)?.value ?? null;
 }
 
-export async function getCurrentUser(req: NextRequest) {
+export async function getSessionUser(req: NextRequest) {
   const token = getSessionToken(req);
   if (!token) return null;
   // findFirst — توکن دیگر یونیک نیست (دادهٔ legacy توکن تکراری دارد)
   const session = await db.session.findFirst({ where: { token }, include: { user: true } });
   if (!session) return null;
   return session.user;
+}
+
+/**
+ * کاربر مؤثر درخواست — با پشتیبانی ورود نیابتی مدیر (نسخهٔ ۶.۵):
+ * اگر کوکی rz_actas موجود باشد و نشستِ اصلی متعلق به مدیر باشد،
+ * هویتِ کاربر هدف برگردانده می‌شود — در همهٔ APIها به‌صورت یکپارچه.
+ */
+export async function getCurrentUser(req: NextRequest) {
+  const base = await getSessionUser(req);
+  if (!base) return null;
+  const actas = req.cookies.get(ACTAS_COOKIE)?.value;
+  if (actas && /^\d+$/.test(actas)) {
+    const baseAdmin = await isAdminUser(base.id);
+    if (baseAdmin) {
+      const target = await db.user.findUnique({ where: { id: Number(actas) } });
+      if (target) return target;
+    }
+  }
+  return base;
 }
 
 export function sessionCookieOptions() {
@@ -81,6 +105,117 @@ export function sessionCookieOptions() {
 }
 
 export const SESSION_COOKIE_NAME = SESSION_COOKIE;
+
+// =====================================================================
+// دسترسی مؤثر و ورود نیابتی (نسخهٔ ۶.۵)
+// resolveAccess — هویت مؤثر (کاربر واقعی یا کاربری که مدیر وارد آن شده)،
+// نقش‌ها، ماتریس دسترسی، تشخیص ادمین و محدودسازی دادهٔ مشاور
+// =====================================================================
+
+export const ACTAS_COOKIE = "rz_actas";
+
+export type AccessUser = Awaited<ReturnType<typeof db.user.findFirst>>;
+
+export type AccessInfo = {
+  user: NonNullable<AccessUser>;
+  base: NonNullable<AccessUser>;
+  actor: NonNullable<AccessUser> | null; // مدیرِ واردشده (در حالت نیابتی)
+  acting: boolean;
+  uid: number;
+  roles: string[];
+  perms: string[] | null; // ["*"] کامل | null قدیمی-باز | آرایهٔ کلیدها
+  isAdmin: boolean;
+  isCounselor: boolean;
+  seeAllData: boolean;
+};
+
+/** نقش‌های فعال کاربر (غیرمعلق و بدون تاریخ انقضا) */
+export async function activeRolesOf(userId: number) {
+  return db.userRole.findMany({
+    where: { userId, isSuspended: false, OR: [{ endDate: null }, { endDate: { gt: new Date() } }] },
+    include: { role: { select: { id: true, title: true, permissions: true } } },
+  });
+}
+
+/** آیا این کاربر مدیر است؟ (عنوان نقش یا کلید "*" در ماتریس) */
+export async function isAdminUser(userId: number): Promise<boolean> {
+  const urs = await activeRolesOf(userId);
+  return urs.some(
+    (ur) =>
+      ADMIN_TITLE_RE.test(ur.role?.title ?? "") ||
+      FULL_ACCESS_ROLES.some((f) => (ur.role?.title ?? "").includes(f)) ||
+      (parseRolePermissions((ur.role as { permissions?: string | null })?.permissions ?? null)?.includes("*") ?? false)
+  );
+}
+
+/** حل کامل دسترسی درخواست — هویت مؤثر + نقش‌ها + ماتریس + اسکوپ داده */
+export async function resolveAccess(req: NextRequest): Promise<AccessInfo | null> {
+  const base = await getSessionUser(req);
+  if (!base) return null;
+
+  // getCurrentUser خودش نیابت را حل می‌کند — اینجا فقط هویت مؤثر و پایه را تفکیک می‌کنیم
+  const user = (await getCurrentUser(req)) ?? base;
+  const acting = user.id !== base.id;
+  const actor = acting ? base : null;
+
+  const urs = await activeRolesOf(user.id);
+  const titles = urs.map((ur) => ur.role?.title ?? "");
+  const permLists = urs.map((ur) => parseRolePermissions((ur.role as { permissions?: string | null })?.permissions ?? null));
+  const isFull =
+    titles.some((t) => FULL_ACCESS_ROLES.some((f) => t.includes(f)) || ADMIN_TITLE_RE.test(t)) ||
+    permLists.some((p) => p?.includes("*"));
+  const perms: string[] | null = isFull ? ["*"] : permLists.some((p) => p === null) ? null : [...new Set(permLists.flat())];
+  const isAdmin = isFull;
+  const isCounselor = !isAdmin && titles.some((t) => COUNSELOR_TITLE_RE.test(t));
+  const seeAllData = isAdmin || !isCounselor || (perms?.includes(SCOPE_ALL) ?? false);
+
+  return { user, base, actor, acting, uid: user.id, roles: titles, perms, isAdmin, isCounselor, seeAllData };
+}
+
+/** شرط اسکوپ جلسات — مشاور فقط جلسات خودش (به‌عنوان مشاور یا ناظر) را می‌بیند */
+export function eventScopeWhere(acc: AccessInfo): Prisma.EventWhereInput {
+  if (acc.seeAllData) return {};
+  return { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] };
+}
+
+/** الحاق امن شرط اسکوپ به where موجود (با AND — تا OR جستجو خراب نشود) */
+export function applyEventScope<T extends { AND?: object[] }>(where: T, acc: AccessInfo): T {
+  const scope = eventScopeWhere(acc);
+  if (!scope.OR) return where;
+  where.AND = [...(where.AND ?? []), scope];
+  return where;
+}
+
+/** گارد عملیات — دسترسی مؤثر را برمی‌گرداند یا پاسخ خطای 403/401 می‌دهد */
+export async function guardAction(
+  req: NextRequest,
+  module: string,
+  action: PermAction,
+  moduleLabel?: string
+): Promise<{ acc: AccessInfo; error: null } | { acc: null; error: Response }> {
+  const acc = await resolveAccess(req);
+  if (!acc) return { acc: null, error: fail("UNAUTHORIZED", 401) };
+  if (!canAction(acc.perms, module, action)) {
+    return {
+      acc: null,
+      error: fail(`دسترسی «${actionLabel(action)}» در بخش ${moduleLabel ?? module} برای نقش شما باز نیست`, 403),
+    };
+  }
+  return { acc, error: null };
+}
+
+/** گارد مدیر — برای بخش‌های حساس سیستم */
+export async function guardAdmin(req: NextRequest): Promise<{ acc: AccessInfo; error: null } | { acc: null; error: Response }> {
+  const acc = await resolveAccess(req);
+  if (!acc) return { acc: null, error: fail("UNAUTHORIZED", 401) };
+  if (!acc.isAdmin) return { acc: null, error: fail("فقط مدیر سامانه به این بخش دسترسی دارد", 403) };
+  return { acc, error: null };
+}
+
+/** آیا مسیرِ ماژول در ماتریس دسترسی کاربر باز است؟ */
+export function hasModuleAccess(acc: AccessInfo, module: string): boolean {
+  return hasPermission(acc.perms, module);
+}
 
 /** تبدیل امن به JSON — BigInt و Date به نوع قابل سریال‌شدن تبدیل می‌شوند */
  

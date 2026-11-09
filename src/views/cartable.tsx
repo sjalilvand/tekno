@@ -16,7 +16,33 @@ import {
   FolderOpen, Search, User, CalendarCheck, History, Lightbulb, FileText,
   Wallet, Siren, ShieldCheck, Clock, FileImage, Pill, CheckCircle2, XCircle,
   AlertTriangle, ArrowLeftRight, Mail, Smartphone, ExternalLink, Loader2,
+  Copy, IdCard, Smartphone as MobileIcon,
 } from "lucide-react";
+
+export function CopyChip({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
+  const [copied, setCopied] = React.useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(value); } catch { /* نادیده */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      onClick={copy}
+      title="کپی"
+      className={cn(
+        "group flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-extrabold tabular-nums ring-1 transition-colors",
+        copied
+          ? "bg-emerald-500 text-white ring-emerald-500"
+          : "bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900"
+      )}
+    >
+      {icon}
+      {label} {value}
+      {copied ? <CheckCircle2 className="h-3 w-3" /> : <Copy className="h-3 w-3 opacity-50 group-hover:opacity-100" />}
+    </button>
+  );
+}
 
 type SearchRow = {
   id: number; name: string; family: string; nid: number; mobile: number;
@@ -28,7 +54,7 @@ type Rec = { severity: string; title: string; reason: string; action: string };
 
 type Dossier = {
   person: {
-    id: number; nid: number; username: string; name: string; family: string; father?: string;
+    id: number; nid: number; nidMissing?: boolean; username: string; name: string; family: string; father?: string;
     gender?: string; birthday?: string | null; marriage?: { name: string } | null;
     education?: { name: string } | null; religion?: string | null; mobile: number; mobile2?: number | null;
     phone?: number | null; email?: string | null; address?: string | null;
@@ -66,17 +92,20 @@ export function CartableView() {
   const [q, setQ] = React.useState("");
   const [rows, setRows] = React.useState<SearchRow[]>([]);
   const [privileged, setPrivileged] = React.useState(true);
+  const [scoped, setScoped] = React.useState(false);
   const [selected, setSelected] = React.useState<number | null>(null);
   const [dossier, setDossier] = React.useState<Dossier | null>(null);
+  const [docError, setDocError] = React.useState<string | null>(null);
   const [loadingList, setLoadingList] = React.useState(true);
   const [loadingDoc, setLoadingDoc] = React.useState(false);
 
   const loadList = React.useCallback(async (query: string) => {
     setLoadingList(true);
     try {
-      const d = await api<{ rows: SearchRow[]; privileged: boolean }>(`/api/cartable?q=${encodeURIComponent(query)}`);
+      const d = await api<{ rows: SearchRow[]; privileged: boolean; scoped?: boolean }>(`/api/cartable?q=${encodeURIComponent(query)}`);
       setRows(d.rows);
       setPrivileged(d.privileged);
+      setScoped(Boolean(d.scoped));
     } catch { /* ignore */ }
     setLoadingList(false);
   }, []);
@@ -84,26 +113,42 @@ export function CartableView() {
   React.useEffect(() => { loadList(""); }, [loadList]);
 
   // پشتیبانی از لینک‌های ورودی: #/cartable?u=5 یا ?event=12
+  // گوش دادن زنده به hashchange + رفرنس انتخاب فعلی تا دوباره‌کاری نشود
+  const selectedRef = React.useRef<number | null>(null);
+  React.useEffect(() => { selectedRef.current = selected; }, [selected]);
+
   React.useEffect(() => {
-    const hash = window.location.hash;
-    const m = hash.match(/cartable\?(?:.*&)?u=(\d+)/);
-    const me = hash.match(/cartable\?(?:.*&)?event=(\d+)/);
-    if (m?.[1]) select(Number(m[1]));
-    else if (me?.[1]) {
-      api<{ event?: { userId?: number } }>(`/api/events/${me[1]}`)
-        .then((d) => { if (d.event?.userId) select(d.event.userId); })
-        .catch(() => {});
-    }
+    const apply = () => {
+      const hash = window.location.hash;
+      const mu = hash.match(/cartable\?(?:[^#]*&)?u=(\d+)/);
+      const me = hash.match(/cartable\?(?:[^#]*&)?event=(\d+)/);
+      if (mu?.[1]) {
+        const uid = Number(mu[1]);
+        if (uid !== selectedRef.current) select(uid);
+      } else if (me?.[1]) {
+        api<{ event?: { userId?: number } }>(`/api/events/${me[1]}`)
+          .then((d) => { if (d.event?.userId && d.event.userId !== selectedRef.current) select(d.event.userId); })
+          .catch(() => {});
+      }
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const select = async (id: number) => {
     setSelected(id);
     setLoadingDoc(true);
+    setDocError(null);
     try {
       const d = await api<Dossier>(`/api/cartable/${id}`);
       setDossier(d);
-    } catch { setDossier(null); }
+    } catch (e) {
+      setDossier(null);
+      const msg = (e as Error).message;
+      setDocError(msg === "UNAUTHORIZED" ? "نشست شما منقضی شده — دوباره وارد شوید." : msg || "خطا در بارگذاری پرونده");
+    }
     setLoadingDoc(false);
   };
 
@@ -137,6 +182,11 @@ export function CartableView() {
             {!privileged && (
               <p className="mt-2 text-[11px] text-muted-foreground">سطح دسترسی شما فقط پروندهٔ شخصی خودتان را نشان می‌دهد.</p>
             )}
+            {privileged && scoped && (
+              <p className="mt-2 flex items-center gap-1 rounded-lg bg-cyan-50 px-2 py-1.5 text-[10.5px] font-bold text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300">
+                <ShieldCheck className="h-3.5 w-3.5" /> فقط مراجعان شما نمایش داده می‌شود
+              </p>
+            )}
           </SectionCard>
 
           <div className="space-y-2">
@@ -159,7 +209,7 @@ export function CartableView() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-bold">{r.name} {r.family}</p>
                   <p className="mt-0.5 text-[10.5px] text-muted-foreground">
-                    {r.nid ? `کد ملی ${faDigits(r.nid)} — ` : ""}
+                    {r.nid ? `کد ملی ${faDigits(r.nid)} — ` : "کد ملی ثبت نشده — "}
                     {faNum(r.sessions)} جلسه {r.pending > 0 && `— ${faNum(r.pending)} در انتظار`}
                     {r.lastSession && ` — آخرین: ${jDate(r.lastSession)}`}
                   </p>
@@ -172,7 +222,17 @@ export function CartableView() {
         {/* ستون پرونده */}
         <div>
           {loadingDoc && <LoadingView label="در حال بارگذاری پرونده..." />}
-          {!loadingDoc && !dossier && (
+          {!loadingDoc && !dossier && docError && (
+            <SectionCard bodyClass="p-10">
+              <div className="flex flex-col items-center gap-3 text-center">
+                <AlertTriangle className="h-10 w-10 text-amber-500" />
+                <p className="text-sm font-bold">پرونده بارگذاری نشد</p>
+                <p className="max-w-sm text-xs leading-6 text-muted-foreground">{docError}</p>
+                <Button variant="outline" size="sm" onClick={() => selected && select(selected)}>تلاش دوباره</Button>
+              </div>
+            </SectionCard>
+          )}
+          {!loadingDoc && !dossier && !docError && (
             <SectionCard bodyClass="p-12">
               <div className="flex flex-col items-center gap-3 text-center">
                 <FolderOpen className="h-10 w-10 text-muted-foreground/50" />
@@ -210,11 +270,21 @@ function DossierPanel({ d }: { d: Dossier }) {
                 </span>
               )}
             </div>
-            <p className="mt-1 text-[11.5px] text-muted-foreground">
-              کد ملی: {faDigits(p.nid)} — همراه: {faDigits(p.mobile)} — {p.gender ?? "—"}
-              {p.education?.name && ` — تحصیلات: ${p.education.name}`}
-              {p.province?.title && ` — ${p.province.title}`}
-            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {p.nid ? (
+                <CopyChip label="کد ملی" value={String(p.nid)} icon={<IdCard className="h-3.5 w-3.5" />} />
+              ) : (
+                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900">
+                  کد ملی ثبت نشده
+                </span>
+              )}
+              {p.mobile ? <CopyChip label="موبایل" value={String(p.mobile)} icon={<MobileIcon className="h-3.5 w-3.5" />} /> : null}
+              <span className="text-[11.5px] text-muted-foreground">
+                {p.gender ?? "—"}
+                {p.education?.name && ` — تحصیلات: ${p.education.name}`}
+                {p.province?.title && ` — ${p.province.title}`}
+              </span>
+            </div>
             <p className="mt-0.5 text-[10.5px] text-muted-foreground">
               نقش‌ها: {p.roleTitles.length ? p.roleTitles.join("، ") : "متقاضی"} — عضویت از {p.signupDate}
             </p>

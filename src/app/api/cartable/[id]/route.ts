@@ -1,33 +1,31 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, resolveAccess } from "@/lib/server";
 import { buildRecommendations } from "@/lib/recommend";
 import { chainSpans } from "@/lib/monitoring";
 import { jDate } from "@/lib/jalali";
 
 // =====================================================================
 // کارتابل کامل یک متقاضی — همهٔ اطلاعات + سوابق اجرایی + توصیه‌های هوشمند
-// GET /api/cartable/[id]
+// GET /api/cartable/[id] — نسخهٔ ۶.۵ با دسترسی مؤثر و اسکوپ مشاور
 // =====================================================================
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
   const { id } = await ctx.params;
   const uid = Number(id);
   if (!uid) return fail("شناسهٔ نامعتبر");
 
-  const urs = await db.userRole.findMany({
-    where: { userId: user.id },
-    include: { role: { select: { title: true } } },
-  });
-  const titles = urs.map((ur) => ur.role?.title ?? "");
-  const privileged = titles.some((t) =>
-    t.includes("مدیر سامانه") || t.includes("مدیر سیستم") || t.includes("مدیر کل") ||
-    t.includes("مدیر مرکز") || t.includes("مشاور") || t.includes("روانپزشک") ||
-    t.includes("ناظر") || t.includes("نظارت") || t.includes("admin")
-  );
-  if (!privileged && user.id !== uid) return fail("دسترسی به کارتابل دیگران مجاز نیست", 403);
+  // مجوز: مدیر/ماتریس کارتابل → همه؛ مشاور → فقط مراجعان خودش؛ سایر → فقط خودش
+  const allowed =
+    acc.seeAllData ||
+    acc.uid === uid ||
+    (await db.event.findFirst({
+      where: { userId: uid, OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] },
+      select: { id: true },
+    }));
+  if (!allowed) return fail("دسترسی به کارتابل این متقاضی برای شما باز نیست", 403);
 
   const person = await db.user.findUnique({
     where: { id: uid },
@@ -42,6 +40,17 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     },
   });
   if (!person) return fail("متقاضی یافت نشد", 404);
+
+  // کد ملی — اگر در جدول کاربر صفر است (دادهٔ قدیمی)، از جلسات بازیابی می‌شود
+  let personNid = person.nid;
+  if (!personNid || personNid === 0n) {
+    const ev = await db.event.findFirst({
+      where: { userId: uid, nid: { not: 0 } },
+      orderBy: { id: "desc" },
+      select: { nid: true },
+    });
+    if (ev?.nid) personNid = ev.nid;
+  }
 
   const events = await db.event.findMany({
     where: { userId: uid },
@@ -76,7 +85,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   let messages: MsgRow[] = [];
   let sms: SmsRow[] = [];
   try {
-    files = await db.file.findMany({ where: { userNID: person.nid }, orderBy: { uploadDateTime: "desc" }, take: 50 });
+    files = await db.file.findMany({ where: { userNID: personNid }, orderBy: { uploadDateTime: "desc" }, take: 50 });
   } catch { /* بخش اسناد در دسترس نیست */ }
   try {
     messages = await db.message.findMany({
@@ -149,7 +158,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   return ok({
     person: {
       ...person,
-      nid: Number(person.nid), mobile: Number(person.mobile),
+      nid: Number(personNid), mobile: Number(person.mobile),
+      nidMissing: !personNid || personNid === 0n,
       mobile2: person.mobile2 ? Number(person.mobile2) : null,
       zipCode: person.zipCode ? Number(person.zipCode) : null,
       birthday: person.birthday ? jDate(person.birthday) : null,

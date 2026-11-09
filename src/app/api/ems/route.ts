@@ -1,14 +1,16 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail, params } from "@/lib/server";
+import { ok, fail, params, resolveAccess, guardAction } from "@/lib/server";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
   const { q, page, pageSize } = params(req);
 
   const where: Prisma.EventsEmsWhereInput = {};
+  // اسکوپ مشاور — فقط موارد حادِ جلسات خودش
+  if (!acc.seeAllData) where.event = { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] };
   if (q) {
     where.OR = [
       { event: { user: { name: { contains: q } } } },
@@ -42,8 +44,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  // سطح دسترسی عملیاتی — بررسی مورد حاد = ویرایش (نسخهٔ ۶.۵)
+  const g = await guardAction(req, "ems", "edit", "موارد حاد (EMS)");
+  if (g.error) return g.error;
+  const user = g.acc.user;
   const { id, status, amount, comment } = await req.json();
   if (!id) return fail("شناسه مورد حاد الزامی است");
   const data: Record<string, unknown> = { confirmedByUserId: user.id };

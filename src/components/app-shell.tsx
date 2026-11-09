@@ -12,7 +12,7 @@ import {
   MessageSquareText, Mail, CalendarHeart, ScrollText, LifeBuoy, Settings, BookOpen,
   ChevronsLeft, ChevronDown, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search, PlugZap,
   FileBarChart2, PanelRightClose, PanelRightOpen, X, Network, FolderOpen, ClipboardPlus, ListChecks, DatabaseBackup,
-  BrainCircuit,
+  BrainCircuit, Loader2,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,10 @@ export type MetaUser = {
   avatarColor: string | null; mobile: number; email?: string | null;
   consultantLevel: number | null; bio?: string | null; roles: string[];
   permissions?: string[] | null;
+  /** حالت نیابتی — مدیر وارد حساب کاربر دیگری شده است */
+  acting?: { actorId: number; actorName: string } | null;
+  /** اسکوپ داده — مشاور فقط مراجعان خودش را می‌بیند */
+  scope?: { seesAllData?: boolean; isCounselor?: boolean } | null;
 };
 
 type NavItem = { key: string; label: string; icon: React.ElementType; badgeKey?: "unread" };
@@ -241,6 +245,34 @@ function Brand({ collapsed, onCloseMobile }: { collapsed: boolean; onCloseMobile
 
 type NotifItem = { id: number; title: string; body: string | null; isRead: boolean; createdAt: string };
 
+/** بنر حالت نیابتی — مدیر با هویت کاربر دیگر در سامانه است */
+function ActingBanner({ actorName }: { actorName: string }) {
+  const [busy, setBusy] = React.useState(false);
+  const exit = async () => {
+    setBusy(true);
+    try {
+      await api("/api/users/impersonate", { method: "DELETE" });
+      window.location.hash = "#/users";
+      window.location.reload();
+    } catch { setBusy(false); }
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2 border-b border-violet-200 bg-gradient-to-l from-violet-50 via-fuchsia-50 to-violet-50 px-4 py-2 text-[12px] dark:border-violet-900 dark:from-violet-950/50 dark:via-fuchsia-950/40 dark:to-violet-950/50">
+      <UserRound className="h-4 w-4 text-violet-600 dark:text-violet-300" />
+      <span className="font-bold text-violet-800 dark:text-violet-200">حالت نیابتی:</span>
+      <span className="text-violet-700 dark:text-violet-300">شما با هویت «{actorName}» در سامانه کار می‌کنید — همهٔ داده‌ها از نگاه او نمایش داده می‌شود.</span>
+      <button
+        onClick={exit}
+        disabled={busy}
+        className="flex items-center gap-1 rounded-full bg-violet-600 px-3 py-1 text-[11px] font-bold text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-60"
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+        بازگشت به حساب مدیر
+      </button>
+    </div>
+  );
+}
+
 /** زنگ اعلان‌ها — هشدارهای مدل ریسک و اطلاعیه‌های سامانه */
 function NotificationBell() {
   const [items, setItems] = React.useState<NotifItem[]>([]);
@@ -400,6 +432,8 @@ export function AppShell({
       <div className={cn("flex min-h-screen flex-col transition-all duration-300", collapsed ? "lg:pr-[76px]" : "lg:pr-[264px]")}>
         {/* هشدار قطع اتصال پایگاه داده */}
         <DbStatusBanner />
+        {/* حالت نیابتی — مدیر وارد حساب دیگری شده */}
+        {user.acting && <ActingBanner actorName={user.acting.actorName} />}
         {/* هدر */}
         <header className="glass-header sticky top-0 z-20 border-b">
           <div className="flex h-16 items-center gap-3 px-4 lg:px-6">

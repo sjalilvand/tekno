@@ -55,6 +55,61 @@ export const PERM_MODULES: PermModule[] = [
 
 export const PERM_GROUPS = [...new Set(PERM_MODULES.map((m) => m.group))];
 
+// =====================================================================
+// سطح عملیات — دیدن / ثبت / ویرایش / حذف (نسخهٔ ۶.۵)
+// کلیدها در ماتریس: «module» = دیدن، «module:create|edit|delete» = عملیات
+// آرایهٔ بدون هیچ «:» = قالب قدیمی — بودن ماژول یعنی همهٔ عملیات آن باز است
+// =====================================================================
+
+export const PERM_ACTIONS = [
+  { key: "view", label: "دیدن", tone: "emerald" },
+  { key: "create", label: "ثبت", tone: "cyan" },
+  { key: "edit", label: "ویرایش", tone: "amber" },
+  { key: "delete", label: "حذف", tone: "rose" },
+] as const;
+
+export type PermAction = (typeof PERM_ACTIONS)[number]["key"];
+
+/** کلید ویژه — مشاور با این کلید، همهٔ داده‌ها (نه فقط مراجعان خودش) را می‌بیند */
+export const SCOPE_ALL = "scope:all";
+
+/** آیا آرایه در قالب عملیاتی جدید است؟ (حداقل یک کلید دارای «:») */
+export function isActionStyle(perms: string[] | null | undefined): boolean {
+  return Boolean(perms && perms.some((p) => p.includes(":")));
+}
+
+/** آیا این مجموعه دسترسی، عملیات داده‌شده روی ماژول را مجاز می‌داند؟ */
+export function canAction(perms: string[] | null | undefined, module: string, action: PermAction): boolean {
+  if (perms === null || perms === undefined) return true; // legacy — همه‌چیز باز
+  if (perms.includes("*")) return true;
+  if (action === "view") return hasPermission(perms, module);
+  if (!isActionStyle(perms)) return hasPermission(perms, module); // قالب قدیمی — ماژول = همهٔ عملیات
+  return perms.includes(`${module}:${action}`);
+}
+
+/** برچسب فارسی عملیات برای پیام خطا */
+export function actionLabel(action: PermAction): string {
+  return PERM_ACTIONS.find((a) => a.key === action)?.label ?? action;
+}
+
+/** تبدیل آرایهٔ ماژول‌محور قدیمی به قالب عملیاتی — ماژول‌های فعلی = همهٔ عملیات */
+export function toActionStyle(perms: string[]): string[] {
+  if (isActionStyle(perms)) return perms;
+  if (perms.includes("*")) return ["*"];
+  const out: string[] = [];
+  for (const p of perms) {
+    out.push(p);
+    if (PERM_MODULES.some((m) => m.key === p)) out.push(`${p}:create`, `${p}:edit`, `${p}:delete`);
+  }
+  return [...new Set(out)];
+}
+
+/** الگوی نقش‌های مشاور — این نقش‌ها فقط دادهٔ مراجعان خودشان را می‌بینند */
+export const COUNSELOR_TITLE_RE = /مشاور|روانپزشک|روانشناس|روان\u200cشناس/;
+
+/** الگوی نقش‌های مدیریتی — کلیدهای حساس سیستم (نقش‌ها/کاربران/وب‌سرویس) */
+export const ADMIN_TITLE_RE = /مدیر|ادمین|admin|superuser/i;
+
 /** نقش‌های همیشه‌کامل — بدون نیاز به ماتریس */
 export const FULL_ACCESS_ROLES = ["مدیر سامانه", "مدیر سیستم", "مدیر کل", "admin", "Administrator"];
 

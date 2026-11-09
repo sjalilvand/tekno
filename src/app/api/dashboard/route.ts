@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, resolveAccess } from "@/lib/server";
 import { cacheGet, cacheSet, rawScalar } from "@/lib/analytics";
 import { computeQuality, interpretKpi } from "@/lib/quality";
 
@@ -12,11 +12,16 @@ import { computeQuality, interpretKpi } from "@/lib/quality";
  * کوئری‌های سنگین روی MySQL حذف شود (سرعت بارگذاری داشبورد).
  */
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
 
-  const cached = cacheGet<Record<string, unknown>>("dashboard:v4");
+  // اسکوپ مشاور — شاخص‌های جلسه فقط از مراجعان خودش؛ کش هم جداگانه
+  const scopeKey = acc.seeAllData ? "all" : `u${acc.uid}`;
+  const cacheKey = `dashboard:v5:${scopeKey}`;
+  const cached = cacheGet<Record<string, unknown>>(cacheKey);
   if (cached) return ok(cached);
+
+  const evScope = acc.seeAllData ? {} : { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] };
 
   const now = new Date();
   const monthAgo = new Date(now.getTime() - 30 * 86400000);
@@ -40,33 +45,34 @@ export async function GET(req: NextRequest) {
     serviceCounts, recentEvents, upcomingReserves, monthlySeries, statusCounts,
     services,
   ] = await Promise.all([
-    settled(() => db.event.count(), 0),
-    settled(() => db.event.count({ where: { status: "تایید نهایی" } }), 0),
-    settled(() => db.event.count({ where: { status: { contains: "در انتظار" } } }), 0),
-    settled(() => db.event.count({ where: { status: "رد شده" } }), 0),
-    settled(() => db.event.count({ where: { status: "ناتمام" } }), 0),
+    settled(() => db.event.count({ where: evScope }), 0),
+    settled(() => db.event.count({ where: { ...evScope, status: "تایید نهایی" } }), 0),
+    settled(() => db.event.count({ where: { ...evScope, status: { contains: "در انتظار" } } }), 0),
+    settled(() => db.event.count({ where: { ...evScope, status: "رد شده" } }), 0),
+    settled(() => db.event.count({ where: { ...evScope, status: "ناتمام" } }), 0),
     settled(() => db.user.count(), 0),
     settled(() => db.center.count({ where: { isEnabled: true } }), 0),
     settled(() => db.user.count({ where: { roles: { some: { role: { title: { in: ["مشاور", "روانپزشک"] } } } } } }), 0),
     settled(() => db.referr.count({ where: { status: "در انتظار" } }), 0),
     settled(() => db.eventsEms.count({ where: { hadPaymentStatus: { in: ["در انتظار بررسی", "تایید شده"] } } }), 0),
     settled(() => db.budget.findMany({ where: { isActive: true }, take: 6 }), []),
-    settled(() => db.event.count({ where: { startDate: { gte: monthAgo } } }), 0),
-    settled(() => db.event.count({ where: { startDate: { gte: prevMonthStart, lt: monthAgo } } }), 0),
-    settled(() => db.event.groupBy({ by: ["serviceId"], where: { status: "تایید نهایی" }, _count: true }), [] as { serviceId: number; _count: number }[]),
+    settled(() => db.event.count({ where: { ...evScope, startDate: { gte: monthAgo } } }), 0),
+    settled(() => db.event.count({ where: { ...evScope, startDate: { gte: prevMonthStart, lt: monthAgo } } }), 0),
+    settled(() => db.event.groupBy({ by: ["serviceId"], where: { ...evScope, status: "تایید نهایی" }, _count: true }), [] as { serviceId: number; _count: number }[]),
     settled(() => db.event.findMany({
+      where: evScope,
       orderBy: { startDate: "desc" }, take: 8,
       include: { user: { select: { name: true, family: true, avatarColor: true } }, service: { select: { short: true } }, center: { select: { cityTitle: true } } },
     }), []),
     settled(() => db.eventReserve.findMany({
-      where: { date: { gte: now } }, orderBy: { date: "asc" }, take: 6,
+      where: { date: { gte: now }, ...(acc.seeAllData ? {} : { event: evScope }) }, orderBy: { date: "asc" }, take: 6,
       include: { event: { include: { user: { select: { name: true, family: true } } } } },
     }), []),
     settled(() => db.event.findMany({
-      where: { startDate: { gte: new Date(now.getTime() - 330 * 86400000) }, status: "تایید نهایی" },
+      where: { ...evScope, startDate: { gte: new Date(now.getTime() - 330 * 86400000) }, status: "تایید نهایی" },
       select: { startDate: true },
     }), [] as { startDate: Date | null }[]),
-    settled(() => db.event.groupBy({ by: ["status"], _count: true }), [] as { status: string | null; _count: number }[]),
+    settled(() => db.event.groupBy({ by: ["status"], where: evScope, _count: true }), [] as { status: string | null; _count: number }[]),
     settled(() => db.service.findMany(), []),
   ]);
 
@@ -99,7 +105,7 @@ export async function GET(req: NextRequest) {
   const health = await computeQuality();
   const [reserves, emsTotal, repeatClients, onceClients, avgTariffNow, avgTariffPrev] = await Promise.all([
     settled(() => db.eventReserve.count(), 0),
-    settled(() => db.event.count({ where: { isEms: true } }), 0),
+    settled(() => db.event.count({ where: { ...evScope, isEms: true } }), 0),
     settled(async () => rawScalar(`SELECT COUNT(*) c FROM (SELECT \`userId\` FROM \`Events\` WHERE \`status\` = 'تایید نهایی' GROUP BY \`userId\` HAVING COUNT(*) > 1) t`), 0),
     settled(async () => rawScalar(`SELECT COUNT(*) c FROM (SELECT \`userId\` FROM \`Events\` WHERE \`status\` = 'تایید نهایی' GROUP BY \`userId\` HAVING COUNT(*) = 1) t`), 0),
     settled(async () => rawScalar(`SELECT AVG(\`userTariff\`) c FROM \`Events\` WHERE \`startDate\` >= ?`, [monthAgo]), 0),
@@ -137,8 +143,8 @@ export async function GET(req: NextRequest) {
     health: { score: health.score, computedAt: health.computedAt, checks: health.checks },
     kpiCards,
   };
-  cacheSet("dashboard:v4", payload);
-  return ok(payload);
+  cacheSet(cacheKey, payload);
+  return ok({ ...payload, scoped: !acc.seeAllData, scopedName: acc.seeAllData ? null : `${acc.user.name} ${acc.user.family}` });
 }
 
 function budgetsList(budgets: { id: number; title: string; amount: number; used: number; reserved: number; remained: number }[]) {
