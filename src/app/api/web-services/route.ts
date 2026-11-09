@@ -3,22 +3,21 @@
 // =====================================================================
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail, safeJson } from "@/lib/server";
+import { ok, fail, safeJson, guardAction } from "@/lib/server";
+import type { PermAction } from "@/lib/permissions";
 import { CATALOG, findTable, isAllowedOp } from "@/lib/ws/catalog";
 import { validateIdentifiers, validateSelect, listDbSchema } from "@/lib/ws/schema";
 import { randomBytes } from "crypto";
 
-async function requireAdmin(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return null;
-  const full = await db.user.findUnique({ where: { id: user.id }, include: { roles: { include: { role: true } } } });
-  const roles = full?.roles.map((r) => r.role.title).join("|") ?? "";
-  if (!/مدیر سامانه|مدیر سیستم|admin/i.test(roles)) return null;
-  return user;
+async function requireWs(req: NextRequest, action: PermAction) {
+  // نسخهٔ ۶.۶ — گارد بر اساس ماتریس دسترسی؛ مدیر همیشه باز، نقش legacy باز،
+  // نقش محدود فقط با کلید webservices[:action]
+  const g = await guardAction(req, "webservices", action, "وب‌سرویس‌ساز");
+  return g.acc;
 }
 
 export async function GET(req: NextRequest) {
-  const admin = await requireAdmin(req);
+  const admin = await requireWs(req, "view");
   if (!admin) return fail("UNAUTHORIZED", 401);
   const services = await db.webService.findMany({ orderBy: { createdAt: "desc" } });
   return ok({
@@ -34,7 +33,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const admin = await requireAdmin(req);
+  const admin = await requireWs(req, "create");
   if (!admin) return fail("UNAUTHORIZED", 401);
   try {
     const body = await req.json();
@@ -102,7 +101,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const admin = await requireAdmin(req);
+  const admin = await requireWs(req, "delete");
   if (!admin) return fail("UNAUTHORIZED", 401);
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return fail("شناسه لازم است");

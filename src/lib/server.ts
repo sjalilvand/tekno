@@ -146,7 +146,7 @@ export async function activeRolesOf(userId: number) {
 // ------------------------------------------------------------------
 
 /** الگوی سخت‌گیرانه برای مشخصات شخصی — «مدیری»/«مدیرزاده» مدیر حساب نمی‌شوند */
-const ADMIN_SELF_RE = /مدیر\s*(سامانه|سیستم|کل|ارشد|فنی|عامل)|sysadmin|superuser|administrator|^admin$/i;
+const ADMIN_SELF_RE = /مدیر\s*(سامانه|سیستم|کل|ارشد|فنی|عامل|مرکز|کلینیک)|sysadmin|superuser|administrator|^admin$/i;
 
 /** آیا نام/نام‌خانوادگی/نام‌کاربری خودِ کاربر نشانهٔ مدیر بودن است؟ */
 export function selfAdminSignal(u: { name?: string | null; family?: string | null; username?: string | null }): boolean {
@@ -197,7 +197,7 @@ export async function resolveAccess(req: NextRequest): Promise<AccessInfo | null
     permLists.some((p) => p?.includes("*")) ||
     selfAdminSignal(user) ||
     (await legacyFirstAdminId()) === user.id;
-  const perms: string[] | null = isFull ? ["*"] : permLists.some((p) => p === null) ? null : [...new Set(permLists.flat())];
+  const perms: string[] | null = isFull ? ["*"] : permLists.some((p) => p === null) ? null : [...new Set(permLists.flatMap((p) => p ?? []))];
   const isAdmin = isFull;
   const isCounselor = !isAdmin && titles.some((t) => COUNSELOR_TITLE_RE.test(t));
   const seeAllData = isAdmin || !isCounselor || (perms?.includes(SCOPE_ALL) ?? false);

@@ -4,18 +4,14 @@
 // POST /api/api-client  { method, url, headers, body }
 // =====================================================================
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, guardAction } from "@/lib/server";
 
 const MAX_BODY = 300_000; // سقف متن پاسخ — ۳۰۰ کیلوبایت
 const TIMEOUT_MS = 30_000;
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
-  const full = await db.user.findUnique({ where: { id: user.id }, include: { roles: { include: { role: true } } } });
-  const roles = full?.roles.map((r) => r.role.title).join("|") ?? "";
-  if (!/مدیر سامانه|مدیر سیستم|admin/i.test(roles)) return fail("UNAUTHORIZED", 401);
+  const g = await guardAction(req, "webservices", "view", "وب‌سرویس‌ساز");
+  if (g.error) return g.error;
 
   let method: string, url: string, headers: Record<string, string>, body: string | undefined;
   try {

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail, safeJson, guardAdmin } from "@/lib/server";
+import { getCurrentUser, ok, fail, safeJson, guardAdmin, isAdminUser } from "@/lib/server";
 
 // =====================================================================
 // نقش‌ها و سطوح دسترسی — مدیریت کامل RBAC
@@ -12,19 +12,10 @@ import { getCurrentUser, ok, fail, safeJson, guardAdmin } from "@/lib/server";
 // =====================================================================
 
 async function isAdmin(req: NextRequest) {
+  // نسخهٔ ۶.۶ — موتور یکپارچهٔ تشخیص مدیر (نقش، مشخصات شخصی، اولین کاربر)
   const user = await getCurrentUser(req);
   if (!user) return null;
-  const urs = await db.userRole.findMany({
-    where: { userId: user.id, isSuspended: false },
-    include: { role: { select: { title: true, permissions: true } } },
-  });
-  const joined = urs.map((u) => u.role?.title ?? "").join("|");
-  // مدیر = عنوان مدیریتی یا کلید "*" در ماتریس دسترسی (نسخهٔ ۶.۵)
-  if (/مدیر سامانه|مدیر سیستم|مدیر کل|مدیر مرکز|مدیر کلینیک|admin|superuser/i.test(joined)) return user;
-  if (urs.some((u) => {
-    try { const p = u.role?.permissions ? JSON.parse(u.role.permissions) : null; return Array.isArray(p) && p.includes("*"); } catch { return false; }
-  })) return user;
-  return null;
+  return (await isAdminUser(user.id)) ? user : null;
 }
 
 export async function GET(req: NextRequest) {
