@@ -12,9 +12,11 @@ import {
   MessageSquareText, Mail, CalendarHeart, ScrollText, LifeBuoy, Settings, BookOpen,
   ChevronsLeft, ChevronDown, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search, PlugZap,
   FileBarChart2, PanelRightClose, PanelRightOpen, X, Network, FolderOpen, ClipboardPlus, ListChecks, DatabaseBackup,
+  BrainCircuit,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -22,12 +24,16 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { NameAvatar } from "@/components/shared";
 import { ChatWidget } from "@/components/chat-widget";
+import { DbStatusBanner, DbStatusDot } from "@/components/db-status";
+import { hasPermission } from "@/lib/permissions";
+import { api } from "@/lib/client";
 import { BRAND } from "@/lib/brand";
 
 export type MetaUser = {
   id: number; name: string; family: string; username: string; nid: number;
   avatarColor: string | null; mobile: number; email?: string | null;
   consultantLevel: number | null; bio?: string | null; roles: string[];
+  permissions?: string[] | null;
 };
 
 type NavItem = { key: string; label: string; icon: React.ElementType; badgeKey?: "unread" };
@@ -52,11 +58,12 @@ const NAV: NavGroup[] = [
     { key: "referrals", label: "ارجاعات سها", icon: ArrowLeftRight },
     { key: "referral-requests", label: "درخواست‌های رزرو", icon: Inbox },
     { key: "ems", label: "موارد حاد", icon: Siren },
+    { key: "risk-model", label: "مدل کیس حاد و ریسک", icon: BrainCircuit },
   ]},
   { label: "اطلاعات پایه", items: [
     { key: "users", label: "کاربران", icon: Users },
     { key: "centers", label: "مراکز و کلینیک‌ها", icon: Building2 },
-    { key: "roles", label: "نقش‌ها و دسترسی‌ها", icon: ShieldCheck },
+    { key: "roles", label: "کاربران و سطوح دسترسی", icon: ShieldCheck },
     { key: "contracts", label: "قراردادهای سازمانی", icon: FileSignature },
   ]},
   { label: "مالی", items: [
@@ -92,17 +99,22 @@ function readLsGroups(): string[] {
 }
 
 function NavList({
-  route, collapsed, unread, onNavigate, onCloseMobile,
+  route, collapsed, unread, onNavigate, onCloseMobile, permissions,
 }: {
   route: string;
   collapsed: boolean;
   unread: number;
   onNavigate?: () => void;
   onCloseMobile?: () => void;
+  permissions?: string[] | null;
 }) {
-  const activeGroup = NAV.find((g) => g.items.some((i) => i.key === route))?.label;
+  const visibleNav = React.useMemo(
+    () => NAV.map((g) => ({ ...g, items: g.items.filter((i) => hasPermission(permissions, i.key)) })).filter((g) => g.items.length > 0),
+    [permissions]
+  );
+  const activeGroup = visibleNav.find((g) => g.items.some((i) => i.key === route))?.label;
   // خواندن localStorage فقط بعد از mount (سازگار با SSR)
-  const [openGroups, setOpenGroups] = React.useState<string[]>(() => NAV.map((g) => g.label));
+  const [openGroups, setOpenGroups] = React.useState<string[]>(() => visibleNav.map((g) => g.label));
   React.useEffect(() => {
     const saved = readLsGroups();
     if (saved.length) setOpenGroups(saved);
@@ -168,7 +180,7 @@ function NavList({
   return (
     <TooltipProvider delayDuration={200}>
       <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-4" aria-label="منوی اصلی">
-        {NAV.map((group) => {
+        {visibleNav.map((group) => {
           const isOpen = openGroups.includes(group.label) || Boolean(activeGroup === group.label && !collapsed);
           if (collapsed) {
             // حالت نوار باریک: همهٔ آیتم‌ها به‌صورت آیکون
@@ -227,6 +239,82 @@ function Brand({ collapsed, onCloseMobile }: { collapsed: boolean; onCloseMobile
   );
 }
 
+type NotifItem = { id: number; title: string; body: string | null; isRead: boolean; createdAt: string };
+
+/** زنگ اعلان‌ها — هشدارهای مدل ریسک و اطلاعیه‌های سامانه */
+function NotificationBell() {
+  const [items, setItems] = React.useState<NotifItem[]>([]);
+  const [unread, setUnread] = React.useState(0);
+  const [open, setOpen] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    api<{ items: NotifItem[]; unread: number }>("/api/notifications")
+      .then((d) => { setItems(d.items); setUnread(d.unread); })
+      .catch(() => { /* بی‌صدا */ });
+  }, []);
+
+  React.useEffect(() => {
+    load();
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const onOpen = async (o: boolean) => {
+    setOpen(o);
+    if (o && unread > 0) {
+      try {
+        await api("/api/notifications", { method: "POST", body: JSON.stringify({ all: true }) });
+        setUnread(0);
+        setItems((p) => p.map((x) => ({ ...x, isRead: true })));
+      } catch { /* نادیده */ }
+    }
+  };
+
+  return (
+    <DropdownMenu open={open} onOpenChange={onOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="relative" aria-label="اعلان‌ها">
+          <Bell className="h-5 w-5 text-muted-foreground" />
+          {unread > 0 && (
+            <span className="absolute -top-0.5 right-0.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">
+              {faNum(unread)}
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 p-2">
+        <DropdownMenuLabel className="flex items-center justify-between">
+          <span>اعلان‌ها و هشدارها</span>
+          {unread > 0 && <Badge className="h-5 rounded-full bg-rose-500 px-1.5 text-[9px] text-white">{faNum(unread)} جدید</Badge>}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {items.length === 0 ? (
+          <p className="py-6 text-center text-xs text-muted-foreground">اعلانی ندارید</p>
+        ) : (
+          <div className="max-h-80 space-y-1 overflow-y-auto">
+            {items.slice(0, 8).map((n) => (
+              <button
+                key={n.id}
+                className={cn(
+                  "w-full rounded-xl px-3 py-2.5 text-right transition-colors hover:bg-muted/70",
+                  !n.isRead && "bg-rose-50/70 dark:bg-rose-950/30"
+                )}
+                onClick={() => { if (n.title.includes("ریسک کیس حاد")) { setOpen(false); navigate("risk-model"); } }}
+              >
+                <p className="flex items-start gap-1.5 text-[11.5px] font-bold leading-5">
+                  {n.title.includes("ریسک کیس حاد") ? <Siren className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" /> : <Bell className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                  <span className="line-clamp-2">{n.title}</span>
+                </p>
+                {n.body && <p className="mt-0.5 line-clamp-2 pr-5 text-[10.5px] leading-4 text-muted-foreground">{n.body}</p>}
+              </button>
+            ))}
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AppShell({
   user, unread, children,
 }: {
@@ -238,6 +326,7 @@ export function AppShell({
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const { theme, setTheme } = useTheme();
+  const permissions = user.permissions ?? null;
 
   // وضعیت جمع/باز منو فقط بعد از mount از localStorage خوانده می‌شود (سازگار با SSR)
   React.useEffect(() => {
@@ -252,6 +341,7 @@ export function AppShell({
   };
 
   const current = ALL_ITEMS.find((i) => i.key === route);
+  const currentAllowed = hasPermission(permissions, route);
   const isDark = theme === "dark";
 
   // بستن منوی موبایل با Esc
@@ -272,7 +362,7 @@ export function AppShell({
         )}
       >
         <Brand collapsed={collapsed} />
-        <NavList route={route} collapsed={collapsed} unread={unread} />
+        <NavList route={route} collapsed={collapsed} unread={unread} permissions={permissions} />
         <div className="border-t p-3">
           <button
             onClick={toggleCollapsed}
@@ -303,11 +393,13 @@ export function AppShell({
         aria-hidden={!mobileOpen}
       >
         <Brand collapsed={false} onCloseMobile={() => setMobileOpen(false)} />
-        <NavList route={route} collapsed={false} unread={unread} onNavigate={() => setMobileOpen(false)} />
+        <NavList route={route} collapsed={false} unread={unread} onNavigate={() => setMobileOpen(false)} permissions={permissions} />
       </aside>
 
       {/* بدنه */}
       <div className={cn("flex min-h-screen flex-col transition-all duration-300", collapsed ? "lg:pr-[76px]" : "lg:pr-[264px]")}>
+        {/* هشدار قطع اتصال پایگاه داده */}
+        <DbStatusBanner />
         {/* هدر */}
         <header className="glass-header sticky top-0 z-20 border-b">
           <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
@@ -336,8 +428,10 @@ export function AppShell({
               جستجوی کاربر...
             </button>
 
+            <NotificationBell />
+
             <Button variant="ghost" size="icon" className="relative" onClick={() => navigate("messages")} aria-label="پیام‌ها">
-              <Bell className="h-5 w-5 text-muted-foreground" />
+              <Mail className="h-5 w-5 text-muted-foreground" />
               {unread > 0 && (
                 <span className="absolute -top-0.5 right-0.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">
                   {faNum(unread)}
@@ -388,11 +482,27 @@ export function AppShell({
 
         {/* محتوا */}
         <main className="flex-1 px-4 py-6 lg:px-8">
-          <div className="mx-auto max-w-[1400px]">{children}</div>
+          <div className="mx-auto max-w-[1400px]">
+            {currentAllowed ? children : (
+              <div className="flex flex-col items-center justify-center gap-4 rounded-3xl border border-dashed py-24 text-center">
+                <span className="flex h-16 w-16 items-center justify-center rounded-3xl bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-300">
+                  <ShieldCheck className="h-8 w-8" />
+                </span>
+                <div>
+                  <p className="text-base font-extrabold">دسترسی به این بخش مجاز نیست</p>
+                  <p className="mt-1 text-xs text-muted-foreground">برای دریافت دسترسی با مدیر سامانه تماس بگیرید — نقش فعلی شما: {user.roles[0] ?? "کاربر"}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => navigate("dashboard")}>بازگشت به داشبورد</Button>
+              </div>
+            )}
+          </div>
         </main>
 
         <footer className="border-t py-4 text-center text-xs text-muted-foreground mt-auto">
-          <p>نسخه {BRAND.version} — {BRAND.name}</p>
+          <p className="flex items-center justify-center gap-2 flex-wrap">
+            <DbStatusDot />
+            <span>نسخه {BRAND.version} — {BRAND.name}</span>
+          </p>
           <p className="mt-0.5 text-[10.5px] opacity-80">{BRAND.hours} | تلفن: {BRAND.phone}</p>
         </footer>
       </div>

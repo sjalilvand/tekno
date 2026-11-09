@@ -18,7 +18,8 @@ import { ReferralRequestsView } from "@/views/referral-requests";
 import { EmsView } from "@/views/ems";
 import { UsersView } from "@/views/users";
 import { CentersView } from "@/views/centers";
-import { RolesView } from "@/views/roles";
+import { RolesView } from "@/views/access-control";
+import { RiskModelView } from "@/views/risk-model";
 import { ContractsView } from "@/views/contracts";
 import { BudgetsView } from "@/views/budgets";
 import { FinanceView } from "@/views/finance";
@@ -39,7 +40,7 @@ import { Loader2, Flower2 } from "lucide-react";
 
 export default function Page() {
   const [booting, setBooting] = React.useState(true);
-  const [me, setMe] = React.useState<{ user: MetaUser; unread: number } | null>(null);
+  const [me, setMe] = React.useState<{ user: MetaUser; permissions?: string[] | null; unread: number } | null>(null);
 
   const refreshMe = React.useCallback(async () => {
     try {
@@ -74,7 +75,7 @@ export default function Page() {
 
   return (
     <ShellWithRouter
-      user={me.user}
+      user={{ ...me.user, permissions: me.permissions }}
       unread={me.unread}
       refreshMe={refreshMe}
     />
@@ -106,6 +107,7 @@ function ShellWithRouter({
       case "referrals": return <ReferralsView />;
       case "referral-requests": return <ReferralRequestsView />;
       case "ems": return <EmsView />;
+      case "risk-model": return <RiskModelView />;
       case "users": return <UsersView />;
       case "centers": return <CentersView />;
       case "roles": return <RolesView />;

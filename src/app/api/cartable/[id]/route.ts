@@ -68,19 +68,30 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   });
 
   // اسناد و پیام‌ها و پیامک‌ها — سوابق اجرایی
-  const [files, messages, sms] = await Promise.all([
-    db.file.findMany({ where: { userNID: person.nid }, orderBy: { uploadDateTime: "desc" }, take: 50 }),
-    db.message.findMany({
+  // هر بخش جداگانه در try/catch — خطا در یک بخش، کل پرونده را نمی‌شکند
+  type FileRow = { id: number; name: string; uploadDateTime: Date };
+  type MsgRow = { id: number; fromUserId: number; toUserId: number; subject: string | null; text: string | null; timestamp: Date; isRead: boolean };
+  type SmsRow = { id: number; senderId: number | null; receiverId: number | null; message: string | null; createTime: Date; status: string | null };
+  let files: FileRow[] = [];
+  let messages: MsgRow[] = [];
+  let sms: SmsRow[] = [];
+  try {
+    files = await db.file.findMany({ where: { userNID: person.nid }, orderBy: { uploadDateTime: "desc" }, take: 50 });
+  } catch { /* بخش اسناد در دسترس نیست */ }
+  try {
+    messages = await db.message.findMany({
       where: { OR: [{ fromUserId: uid }, { toUserId: uid }] },
       orderBy: { timestamp: "desc" }, take: 30,
       select: { id: true, fromUserId: true, toUserId: true, subject: true, text: true, timestamp: true, isRead: true },
-    }),
-    db.sms.findMany({
+    });
+  } catch { /* بخش پیام‌ها در دسترس نیست */ }
+  try {
+    sms = await db.sms.findMany({
       where: { OR: [{ senderId: uid }, { receiverId: uid }] },
       orderBy: { createTime: "desc" }, take: 30,
       select: { id: true, senderId: true, receiverId: true, message: true, createTime: true, status: true },
-    }),
-  ]);
+    });
+  } catch { /* بخش پیامک‌ها در دسترس نیست */ }
 
   // خط زمانی سوابق اجرایی — ادغام همهٔ رخدادها و مرتب‌سازی
   type TimelineItem = { at: string; kind: string; title: string; detail?: string; ref?: string };
@@ -126,11 +137,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }));
 
   // تیک‌های هوشمند مرتبط با متقاضی
-  const checklists = await db.checklistRun.findMany({
-    where: { userId: uid },
-    include: { items: true, template: { select: { title: true } } },
-    orderBy: { createdAt: "desc" }, take: 10,
-  });
+  let checklists: { id: number; title: string; status: string; items: { id: number; title: string; done: boolean; auto: boolean }[]; template: { title: string } | null }[] = [];
+  try {
+    checklists = await db.checklistRun.findMany({
+      where: { userId: uid },
+      include: { items: true, template: { select: { title: true } } },
+      orderBy: { createdAt: "desc" }, take: 10,
+    });
+  } catch { /* بخش چک‌لیست‌ها در دسترس نیست */ }
 
   return ok({
     person: {

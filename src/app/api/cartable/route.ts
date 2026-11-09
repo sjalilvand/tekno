@@ -38,15 +38,14 @@ export async function GET(req: NextRequest) {
   }
 
   if (!q) {
-    // فهرست متقاضیان فعال اخیر — کسانی که جلسه دارند، مرتب بر اساس آخرین جلسه
+    // فهرست همهٔ متقاضیان — حتی کسانی که هنوز جلسه ندارند؛ جدیدترین‌ها اول
     const rows = await db.user.findMany({
-      where: { eventsAsClient: { some: {} } },
       select: {
         id: true, name: true, family: true, nid: true, mobile: true, avatarColor: true, gender: true,
         eventsAsClient: { select: { id: true, status: true, startDate: true }, orderBy: { startDate: "desc" } },
       },
-      orderBy: { signupDate: "desc" },
-      take: 40,
+      orderBy: [{ signupDate: "desc" }],
+      take: 60,
     });
     return ok({ privileged: true, rows: rows.map(toRow) });
   }
@@ -58,6 +57,7 @@ export async function GET(req: NextRequest) {
         { family: { contains: q } },
         { username: { contains: q } },
         ...(digits.length >= 4 ? [{ nid: BigInt(digits) }] : []),
+        ...(digits.length >= 4 ? [{ mobile: BigInt(digits) }] : []),
       ],
     },
     select: {

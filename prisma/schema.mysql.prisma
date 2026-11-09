@@ -85,10 +85,11 @@ model Service {
 // ---------------------------------------------------------------------
 
 model Role {
-  id       Int        @id
-  title    String
-  codeName String
-  users    UserRole[]
+  id          Int        @id
+  title       String
+  codeName    String
+  permissions String? // JSON — کلیدهای دسترسی؛ خالی/null یعنی دسترسی کامل (سازگاری با گذشته)
+  users       UserRole[]
 
   @@map("Roles")
 }
