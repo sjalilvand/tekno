@@ -22,6 +22,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
     const result = await executeWebService(
       {
         slug: svc.slug, table: svc.table,
+        sourceType: (svc as { sourceType?: string }).sourceType,
+        sqlText: (svc as { sqlText?: string | null }).sqlText,
         columns: JSON.parse(svc.columns || "[]"),
         filters: JSON.parse(svc.filters || "[]"),
         format: svc.format, rowLimit: svc.rowLimit, orderBy: svc.orderBy,

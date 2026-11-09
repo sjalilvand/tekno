@@ -2,7 +2,7 @@
 // رزرو مشاوره
 import * as React from "react";
 import { PageHeader, DataTable, StatusBadge, NameAvatar, Column, LoadingView, SectionCard, ApplicantCell } from "@/components/shared";
-import { faNum, jDate, jTime } from "@/lib/jalali";
+import { faNum, faDigits, jDate, jTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { CalendarClock, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,7 @@ export function ReservesView() {
     },
     { header: "خدمت", cell: (r) => <Badge variant="secondary" className="text-[10.5px] font-semibold">{r.event.service.short}</Badge> },
     { header: "موضوع", cell: (r) => <span className="text-xs">{r.event.topic ?? "—"}</span> },
-    { header: "کد رهگیری", cell: (r) => <span className="text-xs font-bold tabular-nums text-primary">{faNum(r.event.trackingCode ?? 0)}</span> },
+    { header: "کد رهگیری", cell: (r) => <span className="text-xs font-bold tabular-nums text-primary">{faDigits(r.event.trackingCode ?? 0)}</span> },
     {
       header: "زمان رزرو",
       cell: (r) => (

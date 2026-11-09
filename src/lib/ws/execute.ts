@@ -2,10 +2,13 @@
 // وب‌سرویس‌ساز — اجرای سرویس و سریال‌سازی JSON / XML / CSV
 // =====================================================================
 import { rawRows } from "@/lib/analytics";
-import { findTable, safeColumns, isAllowedOp } from "@/lib/ws/catalog";
+import { findTable, isAllowedOp } from "@/lib/ws/catalog";
+import { validateIdentifiers, runSelect } from "@/lib/ws/schema";
 
 export type WsConfig = {
   slug: string;
+  sourceType?: string; // table | sql
+  sqlText?: string | null;
   table: string;
   columns: string[]; // خالی = همهٔ ستون‌های مجاز
   filters: { col: string; op: string; value: string }[];
@@ -43,9 +46,37 @@ function toCsv(rows: Record<string, unknown>[]): string {
 }
 
 export async function executeWebService(cfg: WsConfig, params: URLSearchParams): Promise<WsResult> {
-  const table = findTable(cfg.table);
-  if (!table) throw new Error("جدول مجاز نیست");
-  const cols = safeColumns(table, cfg.columns ?? []);
+  // --- سرویس پرس‌وجویی (استودیوی پرس‌وجو) — SELECT ذخیره‌شده اجرا می‌شود
+  if (cfg.sourceType === "sql" && cfg.sqlText?.trim()) {
+    const limit = Math.max(1, Math.min(Number(params.get("limit")) || cfg.rowLimit || 1000, 10000));
+    const limited = `${cfg.sqlText.replace(/;+\s*$/, "")}`;
+    const guarded = /\bLIMIT\s+\d+/i.test(limited.replace(/'(?:[^']|'')*'/g, "''"))
+      ? limited
+      : `SELECT * FROM (${limited}) AS _rz_ws LIMIT ${limit}`;
+    const res = await runSelect(guarded);
+    const rows = res.rows;
+    const fmt = (params.get("format") || cfg.format || "json").toLowerCase();
+    if (fmt === "csv") return { contentType: "text/csv; charset=utf-8", body: toCsv(rows), rowCount: rows.length };
+    if (fmt === "xml") return { contentType: "application/xml; charset=utf-8", body: toXml(rows, "query_service"), rowCount: rows.length };
+    return { contentType: "application/json; charset=utf-8", body: JSON.stringify({ query: true, count: rows.length, rows }, null, 2), rowCount: rows.length };
+  }
+
+  // --- سرویس جدولی — اعتبارسنجی جدول/ستون در برابر شِمای زندهٔ دیتابیس
+  const live = await validateIdentifiers(cfg.table, cfg.columns ?? []);
+  if (!live.ok) throw new Error(live.error ?? "جدول مجاز نیست");
+  const table = findTable(cfg.table) ?? { name: cfg.table, label: cfg.table, columns: [] };
+  let cols: string[];
+  if ((cfg.columns ?? []).length) {
+    cols = [...cfg.columns];
+  } else if (findTable(cfg.table)?.columns.length) {
+    cols = [...(findTable(cfg.table)!.columns)];
+  } else {
+    // جدول خارج از کاتالوگ — همهٔ ستون‌ها از شِمای زنده
+    const { listDbSchema } = await import("@/lib/ws/schema");
+    const t = (await listDbSchema()).find((x) => x.name.toLowerCase() === cfg.table.toLowerCase());
+    if (!t) throw new Error("جدول یافت نشد");
+    cols = [...t.columns];
+  }
   const colSql = cols.map((c) => `\`${c}\``).join(", ");
   const where: string[] = [];
   const args: unknown[] = [];

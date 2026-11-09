@@ -1,0 +1,26 @@
+{
+  "name": "مرکز مشاوره رز — سامانه مدیریت مشاوره و روان‌درمانی",
+  "short_name": "مشاوره رز",
+  "description": "سامانه مدیریت مرکز مشاوره رز — روان‌درمانی، مشاوره فردی و گروهی، کارتابل، وب‌سرویس و داشبورد",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "dir": "rtl",
+  "lang": "fa-IR",
+  "theme_color": "#a83a54",
+  "background_color": "#fdf6f0",
+  "categories": ["medical", "health", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "کارتابل متقاضی", "url": "/#/cartable", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "جلسات مشاوره", "url": "/#/events", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "داشبورد", "url": "/#/", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

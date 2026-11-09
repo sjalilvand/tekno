@@ -1140,6 +1140,8 @@ model WebService {
   id         Int       @id @default(autoincrement())
   slug       String    @unique // آدرس: /api/ws/<slug>
   title      String
+  sourceType String    @default("table") // table | sql — سرویس جدولی یا پرس‌وجویی
+  sqlText    String?   // متن SELECT برای سرویس‌های پرس‌وجویی (استودیوی پرس‌وجو)
   table      String // نام جدول مجاز از کاتالوگ
   columns    String // JSON: ["id","name", ...] — خالی یعنی همهٔ ستون‌های مجاز
   filters    String? // JSON: [{col,op,value}]

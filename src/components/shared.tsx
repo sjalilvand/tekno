@@ -2,7 +2,7 @@
 // کامپوننت‌های مشترک سامانه — طراحی مدرن RTL
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { faNum, jDate } from "@/lib/jalali";
+import { faNum, faDigits, jDate } from "@/lib/jalali";
 import { navigate } from "@/lib/client";
 import { ChevronRight, ChevronLeft, Inbox, Loader2, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -196,9 +196,9 @@ export function ApplicantCell({
         </div>
         {(hasNid || hasMobile) && (
           <p className="text-[10.5px] tabular-nums leading-4 text-muted-foreground">
-            {hasNid && `کد ملی ${faNum(nid)}`}
+            {hasNid && `کد ملی ${faDigits(nid)}`}
             {hasNid && hasMobile && " — "}
-            {hasMobile && faNum(mobile)}
+            {hasMobile && faDigits(mobile)}
           </p>
         )}
       </div>

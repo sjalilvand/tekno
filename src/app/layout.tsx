@@ -1,17 +1,36 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "vazirmatn/Vazirmatn-font-face.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "next-themes";
+import { PwaRegister } from "@/components/pwa-register";
 
 import { BRAND } from "@/lib/brand";
 
 export const metadata: Metadata = {
   title: `${BRAND.name} | سامانه مدیریت مشاوره و روان‌درمانی`,
   description: BRAND.description,
-  icons: {
-    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23A83A54'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white'>ر</text></svg>",
+  manifest: "/manifest.json",
+  applicationName: BRAND.name,
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: BRAND.short,
   },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icons/apple-touch-icon.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#a83a54",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
 };
 
 export default function RootLayout({
@@ -23,6 +42,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
           {children}
           <Toaster />
+          <PwaRegister />
         </ThemeProvider>
         {/*
           نمودارهای BPMN (diagram-js) برای اندازه‌گیری متن از helper-svg سراسری استفاده می‌کنند؛

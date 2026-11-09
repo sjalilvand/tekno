@@ -6,7 +6,7 @@
 // =====================================================================
 import * as React from "react";
 import { api, navigate } from "@/lib/client";
-import { faNum, jDate } from "@/lib/jalali";
+import { faNum, faDigits, jDate } from "@/lib/jalali";
 import { cn } from "@/lib/utils";
 import { PageHeader, SectionCard, StatCard, StatusBadge, LoadingView, NameAvatar } from "@/components/shared";
 import { Input } from "@/components/ui/input";
@@ -159,7 +159,7 @@ export function CartableView() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-bold">{r.name} {r.family}</p>
                   <p className="mt-0.5 text-[10.5px] text-muted-foreground">
-                    {r.nid ? `کد ملی ${faNum(r.nid)} — ` : ""}
+                    {r.nid ? `کد ملی ${faDigits(r.nid)} — ` : ""}
                     {faNum(r.sessions)} جلسه {r.pending > 0 && `— ${faNum(r.pending)} در انتظار`}
                     {r.lastSession && ` — آخرین: ${jDate(r.lastSession)}`}
                   </p>
@@ -211,7 +211,7 @@ function DossierPanel({ d }: { d: Dossier }) {
               )}
             </div>
             <p className="mt-1 text-[11.5px] text-muted-foreground">
-              کد ملی: {faNum(p.nid)} — همراه: {faNum(p.mobile)} — {p.gender ?? "—"}
+              کد ملی: {faDigits(p.nid)} — همراه: {faDigits(p.mobile)} — {p.gender ?? "—"}
               {p.education?.name && ` — تحصیلات: ${p.education.name}`}
               {p.province?.title && ` — ${p.province.title}`}
             </p>
@@ -294,7 +294,7 @@ function DossierPanel({ d }: { d: Dossier }) {
                   <StatusBadge status={e.status} />
                   {e.isEms && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300">مورد حاد</span>}
                   <span className="mr-auto flex items-center gap-2 text-[10.5px] text-muted-foreground">
-                    #{faNum(e.id)} {e.trackingCode ? `— کد پیگیری ${faNum(e.trackingCode)}` : ""}
+                    #{faNum(e.id)} {e.trackingCode ? `— کد پیگیری ${faDigits(e.trackingCode)}` : ""}
                     <button onClick={() => navigate("events")} className="flex items-center gap-1 text-primary hover:underline">
                       جزئیات <ExternalLink className="h-3 w-3" />
                     </button>

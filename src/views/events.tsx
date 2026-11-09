@@ -85,7 +85,7 @@ export function EventsView() {
   const columns: Column<EventRow>[] = [
     {
       header: "کد رهگیری",
-      cell: (e) => <span className="text-xs font-bold tabular-nums text-primary">{faNum(e.trackingCode ?? 0)}</span>,
+      cell: (e) => <span className="text-xs font-bold tabular-nums text-primary">{faDigits(e.trackingCode ?? 0)}</span>,
     },
     {
       header: "مراجع",
@@ -175,7 +175,7 @@ export function EventsView() {
               <DialogHeader className="border-b bg-gradient-to-l from-accent/60 to-transparent px-6 py-5 text-right">
                 <DialogTitle className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <span className="block text-base font-extrabold">جلسه {faNum(detail.data.event.trackingCode ?? 0)}</span>
+                    <span className="block text-base font-extrabold">جلسه {faDigits(detail.data.event.trackingCode ?? 0)}</span>
                     <span className="mt-1 block text-xs font-normal text-muted-foreground">
                       {detail.data.event.service.name} — {jDate(detail.data.event.startDate)} ساعت {jTime(detail.data.event.startDate)}
                     </span>
