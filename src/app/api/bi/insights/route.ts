@@ -12,7 +12,7 @@
 // (به‌عنوان پذیرنده یا ناظر)؛ مدیر و کاربران با دسترسی کل همهٔ داده را می‌بینند.
 // =====================================================================
 import { NextRequest } from "next/server";
-import { ok, fail, resolveAccess } from "@/lib/server";
+import { ok, fail, resolveAccess, eventScopeSql, eventScopeBare } from "@/lib/server";
 import {
   cacheGet, cacheSet, rawRows, rawScalar, sqlLocalDate, sqlLocalHour, parseWindow, jalaliMonthly,
   windowKey, dbProvider, num,
@@ -40,15 +40,16 @@ function sqlDaysAgo(nDays: number): string {
 export async function GET(req: NextRequest) {
   const acc = await resolveAccess(req);
   if (!acc) return fail("UNAUTHORIZED", 401);
-  // اسکوپ مشاور — فقط جلسات خودش (پذیرش‌شده یا ناظر)
-  const counselorId = acc.seeAllData ? null : acc.uid;
-  const scoped = Boolean(counselorId);
+  // دامنهٔ داده (نسخهٔ ۶.۱۰) — مشاور: جلسات خودش | مدیر استان/کلینیک: حوزهٔ خود
+  const counselorId = acc.seeAllData ? null : (acc.scope.kind === "self" ? acc.uid : null);
+  const scoped = !acc.seeAllData;
   const sp = req.nextUrl.searchParams;
   const centerIdRaw = sp.get("centerId");
   const centerId = centerIdRaw ? Number(centerIdRaw) : null;
   const w = parseWindow(sp.get("from"), sp.get("to"));
 
-  const ck = `insights:${windowKey(w, { centerId, c: scoped ? counselorId : "all" })}`;
+  const scopeTag = counselorId ? `u${counselorId}` : scoped ? `s${JSON.stringify(acc.scope)}` : "all";
+  const ck = `insights:${windowKey(w, { centerId, c: scopeTag })}`;
   const hit = cacheGet<Record<string, unknown>>(ck);
   if (hit) return ok({ ...hit, cached: true });
 
@@ -56,13 +57,16 @@ export async function GET(req: NextRequest) {
     const dailyDate = sqlLocalDate("e.`startDate`");
     const hourlyDate = sqlLocalHour("e.`startDate`");
 
-    // شرط اسکوپ مشاور برای همهٔ کوئری‌های جلسه‌محور
-    const SCOPE = scoped ? " AND (e.`acceptorId` = ? OR e.`supervisorId` = ?)" : "";
-    const SA = scoped ? [counselorId, counselorId] : [];
+    // شرط دامنهٔ داده برای همهٔ کوئری‌های جلسه‌محور (نسخهٔ ۶.۱۰)
+    const sc = scoped ? eventScopeSql(acc, "e") : { clause: "", args: [] as unknown[] };
+    const SCOPE = sc.clause;
+    const SA = sc.args;
+    // شرط بدون نام مستعار — برای زیرکوئری‌های Events
+    const bare = scoped ? eventScopeBare(acc, "") : { sql: "1=1", args: [] as unknown[] };
 
     const evArgs: unknown[] = [...SA];
     let evWhere = " WHERE 1=1";
-    if (scoped) { evWhere += " AND (e.`acceptorId` = ? OR e.`supervisorId` = ?)"; }
+    if (scoped && SCOPE) { evWhere += ` ${SCOPE}`; }
     if (centerId) { evWhere += " AND e.`centerId` = ?"; evArgs.push(centerId); }
     if (w.fromIso) { evWhere += ` AND ${dailyDate} >= ?`; evArgs.push(w.fromIso); }
     if (w.toIso) { evWhere += ` AND ${dailyDate} <= ?`; evArgs.push(w.toIso); }
@@ -86,13 +90,13 @@ export async function GET(req: NextRequest) {
         rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`status\` LIKE 'در انتظار%'${SCOPE}`, SA),
         rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`status\` = 'رد شده'${SCOPE}`, SA),
         scoped
-          ? rawScalar(`SELECT COUNT(DISTINCT \`userId\`) AS c FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?`, SA)
+          ? rawScalar(`SELECT COUNT(DISTINCT \`userId\`) AS c FROM \`Events\` WHERE ${bare.sql}`, bare.args)
           : rawScalar(`SELECT COUNT(*) AS c FROM \`Users\``),
         scoped
-          ? rawScalar(`SELECT COUNT(DISTINCT \`centerId\`) AS c FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?`, SA)
+          ? rawScalar(`SELECT COUNT(DISTINCT \`centerId\`) AS c FROM \`Events\` WHERE ${bare.sql}`, bare.args)
           : rawScalar(`SELECT COUNT(*) AS c FROM \`Centers\``),
         scoped
-          ? rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?${centerId ? " AND \`centerId\` = ?" : ""})`, [...SA, ...(centerId ? [centerId] : [])])
+          ? rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE ${bare.sql}${centerId ? " AND \`centerId\` = ?" : ""})`, [...bare.args, ...(centerId ? [centerId] : [])])
           : rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r${centerId ? " WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`centerId\` = ?)" : ""}`, centerId ? [centerId] : []),
       ]);
     const base = baseRows[0] ?? {};
@@ -141,7 +145,7 @@ export async function GET(req: NextRequest) {
     // مراجعان تکرارشونده — داخل دیتابیس (اسکوپ‌شده)
     const repeatConds = ["e.\`status\` = 'تایید نهایی'"];
     const repeatArgs: unknown[] = [...SA];
-    if (scoped) { repeatConds.push("(e.\`acceptorId\` = ? OR e.\`supervisorId\` = ?)"); }
+    if (scoped) { const b2 = eventScopeBare(acc, "e"); repeatConds.push(b2.sql); repeatArgs.push(...b2.args); }
     if (centerId) { repeatConds.push("e.\`centerId\` = ?"); repeatArgs.push(centerId); }
     const RC = repeatConds.join(" AND ");
     const [repeatClients, onceClients] = await Promise.all([
@@ -150,8 +154,8 @@ export async function GET(req: NextRequest) {
     ]);
 
     // ---------------- کیفیت داده ----------------
-    // در اسکوپ مشاور: چک‌های جلسه‌محور اسکوپ می‌شوند؛ چک‌های سیستمی (کد ملی تکراری، پیامک، لجستیک) خنثی می‌شوند
-    const EV_COND = scoped ? "(e.\`acceptorId\` = ? OR e.\`supervisorId\` = ?) AND " : "";
+    // در دامنهٔ محدود: چک‌های جلسه‌محور اسکوپ می‌شوند؛ چک‌های سیستمی (کد ملی تکراری، پیامک، لجستیک) خنثی می‌شوند
+    const EV_COND = scoped ? `${eventScopeBare(acc, "e").sql} AND ` : "";
     const EV_ARGS = SA;
     const [noStart, zeroTariff, dupTrackingRaw, dupNidRaw, futureStart, stalePending, failedSms, orphanReserves, noMobile] =
       await Promise.all([

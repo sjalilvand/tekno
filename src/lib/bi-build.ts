@@ -57,24 +57,41 @@ export type BiPayload = {
 /**
  * counselorId — اگر مقدار داشته باشد، داشبورد فقط جلساتِ همان مشاور
  * (به‌عنوان پذیرنده یا ناظر) را حساب می‌کند؛ مدیر سامانه با null همهٔ داده را می‌بیند.
+ * نسخهٔ ۶.۱۰ — scope: برای مدیر استان (provinces) یا مدیر کلینیک (centers)
+ * دادهٔ همان حوزه حساب می‌شود؛ برای مشاور چندکلینیکی هم قابل استفاده است.
  */
-export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: string | null, toRaw: string | null, counselorId?: number | null): Promise<BiPayload> {
+export type BiScope = { provinces?: number[]; centers?: number[] } | null;
+
+export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: string | null, toRaw: string | null, counselorId?: number | null, scope?: BiScope): Promise<BiPayload> {
   const provinceId = provinceIdRaw ? Number(provinceIdRaw) : null;
   const w = parseWindow(fromRaw, toRaw);
-  const scoped = Boolean(counselorId);
+  const scopeProvinces = scope?.provinces ?? [];
+  const scopeCenters = scope?.centers ?? [];
+  const scoped = Boolean(counselorId || scopeProvinces.length || scopeCenters.length);
 
-  const ck = `bi:${windowKey(w, { provinceId, c: scoped ? counselorId : "all" })}`;
+  const scopeTag = counselorId ? `u${counselorId}` : scoped ? `s${JSON.stringify({ p: scopeProvinces, c: scopeCenters })}` : "all";
+  const ck = `bi:${windowKey(w, { provinceId, c: scopeTag })}`;
   const hit = cacheGet<Record<string, unknown>>(ck);
   if (hit) return { ...(hit as unknown as BiPayload), cached: true };
+
+  /** شرط اسکوپ جلسات — با پیشوند اختیاری ستون‌ها */
+  const scopeFrag = (pre: string): { sql: string; args: unknown[] } => {
+    const c = (name: string) => (pre ? `\`${pre}\`.\`${name}\`` : `\`${name}\``);
+    if (counselorId) return { sql: `(${c("acceptorId")} = ? OR ${c("supervisorId")} = ?)`, args: [counselorId, counselorId] };
+    if (scopeProvinces.length) return { sql: `${c("centerId")} IN (SELECT \`id\` FROM \`Centers\` WHERE \`provinceId\` IN (${scopeProvinces.map(() => "?").join(",")}))`, args: [...scopeProvinces] };
+    if (scopeCenters.length) return { sql: `${c("centerId")} IN (${scopeCenters.map(() => "?").join(",")})`, args: [...scopeCenters] };
+    return { sql: "1=1", args: [] };
+  };
 
   try {
     // ---------- شرط‌های مشترک جلسات ----------
     const evArgs: unknown[] = [];
     let evWhere = "";
     if (scoped) {
-      // اسکوپ مشاور — فقط جلسات خودش (پذیرش‌شده یا ناظرِ آن‌ها)
-      evWhere += " AND (e.`acceptorId` = ? OR e.`supervisorId` = ?)";
-      evArgs.push(counselorId, counselorId);
+      // دامنهٔ داده — مشاور: جلسات خودش | مدیر استان/کلینیک: جلسات حوزهٔ خود
+      const f = scopeFrag("e");
+      evWhere += ` AND ${f.sql}`;
+      evArgs.push(...f.args);
     }
     if (provinceId) {
       evWhere += " AND e.`centerId` IN (SELECT `id` FROM `Centers` WHERE `provinceId` = ?)";
@@ -112,10 +129,10 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
 
     const [reserves, usersTotal, smsTotal, referrTotal] = await Promise.all([
       scoped
-        ? rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?)`, [counselorId, counselorId])
+        ? rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE ${scopeFrag("").sql})`, scopeFrag("").args)
         : rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\``),
       scoped
-        ? rawScalar(`SELECT COUNT(DISTINCT \`userId\`) AS c FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?`, [counselorId, counselorId])
+        ? rawScalar(`SELECT COUNT(DISTINCT \`userId\`) AS c FROM \`Events\` WHERE ${scopeFrag("").sql}`, scopeFrag("").args)
         : rawScalar(`SELECT COUNT(*) AS c FROM \`Users\``),
       scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM \`SMS\``),
       scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM \`Referrs\``),
@@ -145,16 +162,16 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
         rawRows(`SELECT ed.\`name\` AS k, COUNT(*) AS c FROM \`Events\` e LEFT JOIN \`Users\` u ON e.\`userId\` = u.\`id\` LEFT JOIN \`Education\` ed ON u.\`educationId\` = ed.\`id\` WHERE 1=1${W} GROUP BY ed.\`name\``, A),
         rawRows(`SELECT u.\`name\` AS n, u.\`family\` AS f, COUNT(*) AS c FROM \`Events\` e LEFT JOIN \`Users\` u ON e.\`acceptorId\` = u.\`id\` WHERE e.\`acceptorId\` > 0${W} GROUP BY u.\`id\`, u.\`name\`, u.\`family\``, A),
         scoped
-          ? rawRows(`SELECT ee.\`severity\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE ee.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?) GROUP BY ee.\`severity\``, [counselorId, counselorId])
+          ? rawRows(`SELECT ee.\`severity\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE ee.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE ${scopeFrag("").sql}) GROUP BY ee.\`severity\``, scopeFrag("").args)
           : rawRows(`SELECT ee.\`severity\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE 1=1 GROUP BY ee.\`severity\``),
         scoped
-          ? rawRows(`SELECT ee.\`hadPaymentStatus\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE ee.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?) GROUP BY ee.\`hadPaymentStatus\``, [counselorId, counselorId])
+          ? rawRows(`SELECT ee.\`hadPaymentStatus\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE ee.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE ${scopeFrag("").sql}) GROUP BY ee.\`hadPaymentStatus\``, scopeFrag("").args)
           : rawRows(`SELECT ee.\`hadPaymentStatus\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE 1=1 GROUP BY ee.\`hadPaymentStatus\``),
         scoped ? Promise.resolve([]) : rawRows(`SELECT ${sqlLocalDate("u.\`signupDate\`")} AS d, COUNT(*) AS c FROM \`Users\` u WHERE u.\`signupDate\` IS NOT NULL GROUP BY ${sqlLocalDate("u.\`signupDate\`")} ORDER BY 1`),
         scoped ? Promise.resolve([]) : rawRows(`SELECT r.\`status\` AS k, COUNT(*) AS c FROM \`Referrs\` r WHERE 1=1${provinceId ? " AND r.\`provinceId\` = ?" : ""} GROUP BY r.\`status\``, provinceId ? [provinceId] : []),
         scoped ? Promise.resolve([]) : rawRows(`SELECT s.\`status\` AS k, COUNT(*) AS c FROM \`SMS\` s GROUP BY s.\`status\``),
         scoped
-          ? rawRows(`SELECT ${sqlLocalDate("g.\`startDate\`")} AS d, COUNT(*) AS c FROM \`GroupEvents\` g WHERE g.\`startDate\` IS NOT NULL AND g.\`acceptorId\` = ? GROUP BY ${sqlLocalDate("g.\`startDate\`")} ORDER BY 1`, [counselorId])
+          ? rawRows(`SELECT ${sqlLocalDate("g.\`startDate\`")} AS d, COUNT(*) AS c FROM \`GroupEvents\` g WHERE g.\`startDate\` IS NOT NULL AND ${scopeFrag("g").sql} GROUP BY ${sqlLocalDate("g.\`startDate\`")} ORDER BY 1`, scopeFrag("g").args)
           : rawRows(`SELECT ${sqlLocalDate("g.\`startDate\`")} AS d, COUNT(*) AS c FROM \`GroupEvents\` g WHERE g.\`startDate\` IS NOT NULL GROUP BY ${sqlLocalDate("g.\`startDate\`")} ORDER BY 1`),
       ]);
 

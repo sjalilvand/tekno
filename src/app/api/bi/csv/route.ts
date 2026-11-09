@@ -17,7 +17,11 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const chartId = sp.get("chart") ?? "";
   try {
-    const payload = (await buildBiPayload(sp.get("provinceId"), sp.get("from"), sp.get("to"), acc.seeAllData ? null : acc.uid)) as unknown as Payload;
+    const payload = (await buildBiPayload(
+      sp.get("provinceId"), sp.get("from"), sp.get("to"),
+      acc.seeAllData ? null : (acc.scope.kind === "self" ? acc.uid : null),
+      acc.seeAllData ? null : { provinces: acc.scope.provinces, centers: acc.scope.centers },
+    )) as unknown as Payload;
     if (chartId === "budgets") {
       const t = payload.budgetTable;
       const esc = (v: unknown) => {

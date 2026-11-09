@@ -30,6 +30,7 @@ model Province {
   cities     City[]
   centers    Center[]
   users      User[]
+  userRoles  UserRole[]
 
   @@map("Provinces")
 }
@@ -89,6 +90,9 @@ model Role {
   title       String
   codeName    String
   permissions String? // JSON — کلیدهای دسترسی؛ خالی/null یعنی دسترسی کامل (سازگاری با گذشته)
+  // دامنهٔ داده (نسخهٔ ۶.۱۰) — چه نوع داده‌ای را ببیند؟
+  // null = خودکار (مطابق گذشته: مشاور فقط خودش، بقیه همه) | all | province | center | self
+  dataScope   String?
   users       UserRole[]
 
   @@map("Roles")
@@ -140,6 +144,7 @@ model User {
   messagesFrom   Message[]   @relation("MsgFrom")
   messagesTo     Message[]   @relation("MsgTo")
   taxes          ConsultantTax[]
+  centerLinks    UserCenter[]
 
   @@index([signupDate])
   @@index([gender])
@@ -162,9 +167,30 @@ model UserRole {
   confirmDate DateTime?
   addedBy     Int?
   isSuspended Boolean  @default(false)
+  // محدودهٔ دادهٔ این انتساب (نسخهٔ ۶.۱۰) — برای نقش‌های استانی/مرکزی
+  provinceId  Int?
+  province    Province? @relation(fields: [provinceId], references: [id])
+  centerId    Int?
+  center      Center?   @relation(fields: [centerId], references: [id])
 
   @@index([userId])
   @@map("UserRoles")
+}
+
+// ---------------------------------------------------------------------
+// عضویت کاربر (مشاور/منشی/مدیر) در مراکز — یک مشاور می‌تواند همزمان
+// در چند کلینیک کار کند و دادهٔ هر کلینیک جداگانه قابل مشاهده باشد (نسخهٔ ۶.۱۰)
+// ---------------------------------------------------------------------
+model UserCenter {
+  id        Int     @id @default(autoincrement())
+  userId    Int
+  user      User    @relation(fields: [userId], references: [id])
+  centerId  Int
+  center    Center  @relation(fields: [centerId], references: [id])
+  isPrimary Boolean @default(false)
+
+  @@unique([userId, centerId])
+  @@map("UserCenters")
 }
 
 model Session {
@@ -222,6 +248,8 @@ model Center {
   events      Event[]
   bankAccounts CenterBankAccount[]
   equipments  CenterEquipment[]
+  staff       UserCenter[]
+  userRoles   UserRole[]
 
   @@index([provinceId])
   @@map("Centers")

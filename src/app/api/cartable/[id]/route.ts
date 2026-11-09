@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { ok, fail, resolveAccess } from "@/lib/server";
+import { ok, fail, resolveAccess, eventScopeWhere } from "@/lib/server";
 import { buildRecommendations } from "@/lib/recommend";
 import { chainSpans } from "@/lib/monitoring";
 import { jDate } from "@/lib/jalali";
@@ -17,12 +17,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const uid = Number(id);
   if (!uid) return fail("شناسهٔ نامعتبر");
 
-  // مجوز: مدیر/ماتریس کارتابل → همه؛ مشاور → فقط مراجعان خودش؛ سایر → فقط خودش
+  // مجوز (نسخهٔ ۶.۱۰): مدیر → همه؛ مدیر استان → متقاضیان استان؛ مدیر کلینیک → متقاضیان کلینیک؛
+  // مشاور → فقط مراجعان خودش؛ سایر → فقط خودشان
   const allowed =
     acc.seeAllData ||
     acc.uid === uid ||
     (await db.event.findFirst({
-      where: { userId: uid, OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] },
+      where: { userId: uid, AND: [eventScopeWhere(acc)] },
       select: { id: true },
     }));
   if (!allowed) return fail("دسترسی به کارتابل این متقاضی برای شما باز نیست", 403);
@@ -53,7 +54,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }
 
   const events = await db.event.findMany({
-    where: { userId: uid },
+    // دامنهٔ داده — مشاور/مدیر محدود فقط جلسات در محدودهٔ خودش را در پرونده می‌بیند
+    where: acc.seeAllData ? { userId: uid } : { userId: uid, AND: [eventScopeWhere(acc)] },
     orderBy: { startDate: "desc" },
     select: {
       id: true, trackingCode: true, status: true, isEms: true, isGroup: true,

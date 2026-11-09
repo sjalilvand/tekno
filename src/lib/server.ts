@@ -4,7 +4,7 @@ import { scryptSync, randomBytes, timingSafeEqual, createHash } from "crypto";
 import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
 import {
-  parseRolePermissions, FULL_ACCESS_ROLES, ADMIN_TITLE_RE, COUNSELOR_TITLE_RE,
+  parseRolePermissions, FULL_ACCESS_ROLES, ADMIN_TITLE_RE, COUNSELOR_TITLE_RE, SCOPED_MANAGER_TITLE_RE, isFullAccessTitle,
   hasPermission, canAction, actionLabel, SCOPE_ALL, type PermAction,
 } from "@/lib/permissions";
 
@@ -127,13 +127,82 @@ export type AccessInfo = {
   isAdmin: boolean;
   isCounselor: boolean;
   seeAllData: boolean;
+  scope: DataScope; // دامنهٔ دادهٔ مؤثر (نسخهٔ ۶.۱۰)
 };
+
+// ------------------------------------------------------------------
+// دامنهٔ داده (نسخهٔ ۶.۱۰) — تعریف اینکه هر نقش چه نوع داده‌ای را می‌بیند:
+//   all      — همهٔ داده‌ها (مدیر سامانه / نقش با دامنهٔ کامل)
+//   province — فقط دادهٔ استان‌های تعیین‌شده (مدیر استان)
+//   center   — فقط دادهٔ مراکز/کلینیک‌های تعیین‌شده (مدیر کلینیک)
+//   self     — فقط دادهٔ خودِ کاربر (مشاور — مراجعان خودش)
+// برای مشاور چندکلینیکی، فهرست «centers» کلینیک‌های همکاری اوست تا
+// دادهٔ هر کلینیک جداگانه قابل مشاهده باشد.
+// ------------------------------------------------------------------
+export type DataScope = {
+  kind: "all" | "province" | "center" | "self";
+  provinces: number[]; // استان‌های مجاز — مدیر استان
+  centers: number[];   // مراکز مجاز — مدیر کلینیک یا کلینیک‌های همکاری مشاور
+};
+
+const ALL_SCOPE: DataScope = { kind: "all", provinces: [], centers: [] };
+const SELF_SCOPE: DataScope = { kind: "self", provinces: [], centers: [] };
+
+/** حل دامنهٔ دادهٔ مؤثر کاربر — نقش‌ها + محدودهٔ انتساب‌ها + عضویت مراکز */
+async function resolveDataScope(
+  user: NonNullable<AccessUser>,
+  urs: Awaited<ReturnType<typeof activeRolesOf>>,
+  perms: string[] | null,
+  isAdmin: boolean,
+): Promise<DataScope> {
+  if (isAdmin) return ALL_SCOPE;
+  if (perms && perms.includes(SCOPE_ALL)) return ALL_SCOPE; // کلید ویژهٔ «همهٔ داده‌ها»
+
+  const provinces = new Set<number>();
+  const centers = new Set<number>();
+  let hasCenterRole = false; // حداقل یک نقش با دامنهٔ «مرکز»
+  let hasProvinceRole = false;
+
+  for (const ur of urs) {
+    const ds = (ur.role as { dataScope?: string | null } | null)?.dataScope ?? null;
+    if (ds === "all") return ALL_SCOPE;
+    if (ds === "province") {
+      hasProvinceRole = true;
+      const pid = (ur as { provinceId?: number | null }).provinceId ?? user.provinceId ?? null;
+      if (pid) provinces.add(Number(pid));
+    } else if (ds === "center") {
+      hasCenterRole = true;
+      const cid = (ur as { centerId?: number | null }).centerId;
+      if (cid) centers.add(Number(cid));
+    }
+  }
+
+  // عضویت‌های مرکزی کاربر — کلینیک‌های همکاری (برای مشاور چندکلینیکی هم ملاک تفکیک است)
+  const memberships = await db.userCenter.findMany({ where: { userId: user.id }, select: { centerId: true } });
+  const memberIds = memberships.map((m) => Number(m.centerId));
+
+  // اولویت: استان > مرکز > خودِ کاربر > همه (رفتار قدیمی نقش‌های بدون دامنه)
+  if (hasProvinceRole) {
+    if (!provinces.size && user.provinceId) provinces.add(Number(user.provinceId));
+    if (!provinces.size) return SELF_SCOPE; // مدیر استان بدون استان تعیین‌شده — امن‌ترین حالت
+    return { kind: "province", provinces: [...provinces], centers: [] };
+  }
+  if (hasCenterRole) {
+    if (!centers.size) for (const c of memberIds) centers.add(c);
+    if (!centers.size) return SELF_SCOPE; // مدیر مرکز بدون مرکز تعیین‌شده — امن‌ترین حالت
+    return { kind: "center", provinces: [], centers: [...centers] };
+  }
+  // رفتار خودکار گذشته: نقش‌های مشاور فقط دادهٔ خودشان؛ سایر نقش‌ها همه‌چیز
+  const isCounselor = urs.some((ur) => COUNSELOR_TITLE_RE.test(ur.role?.title ?? ""));
+  if (isCounselor) return { kind: "self", provinces: [], centers: [...memberIds] };
+  return ALL_SCOPE;
+}
 
 /** نقش‌های فعال کاربر (غیرمعلق و بدون تاریخ انقضا) */
 export async function activeRolesOf(userId: number) {
   return db.userRole.findMany({
     where: { userId, isSuspended: false, OR: [{ endDate: null }, { endDate: { gt: new Date() } }] },
-    include: { role: { select: { id: true, title: true, permissions: true } } },
+    include: { role: { select: { id: true, title: true, permissions: true, dataScope: true } } },
   });
 }
 
@@ -163,15 +232,17 @@ async function legacyFirstAdminId(): Promise<number | null> {
   return first?.id ?? null;
 }
 
-/** آیا این کاربر مدیر است؟ (نقش، مشخصات شخصی یا جانشین اولین کاربر) */
+/** آیا این کاربر مدیر است؟ (نقش، مشخصات شخصی یا جانشین اولین کاربر)
+ *  نسخهٔ ۶.۱۰ — نقش‌های «مدیر استان/کلینیک/مرکز» ادمین کامل حساب نمی‌شوند؛
+ *  دسترسی‌شان از دامنهٔ دادهٔ نقش (dataScope) تعیین می‌شود. */
 export async function isAdminUser(userId: number): Promise<boolean> {
   const urs = await activeRolesOf(userId);
-  const roleAdmin = urs.some(
-    (ur) =>
-      ADMIN_TITLE_RE.test(ur.role?.title ?? "") ||
-      FULL_ACCESS_ROLES.some((f) => (ur.role?.title ?? "").includes(f)) ||
-      (parseRolePermissions((ur.role as { permissions?: string | null })?.permissions ?? null)?.includes("*") ?? false)
-  );
+  const roleAdmin = urs.some((ur) => {
+    const t = ur.role?.title ?? "";
+    if (isFullAccessTitle(t)) return true;
+    if (SCOPED_MANAGER_TITLE_RE.test(t)) return false; // مدیر محدود — نه ادمین
+    return ADMIN_TITLE_RE.test(t) || (parseRolePermissions((ur.role as { permissions?: string | null })?.permissions ?? null)?.includes("*") ?? false);
+  });
   if (roleAdmin) return true;
   const u = await db.user.findUnique({ where: { id: userId }, select: { name: true, family: true, username: true } });
   if (u && selfAdminSignal(u)) return true;
@@ -193,22 +264,105 @@ export async function resolveAccess(req: NextRequest): Promise<AccessInfo | null
   const titles = urs.map((ur) => ur.role?.title ?? "");
   const permLists = urs.map((ur) => parseRolePermissions((ur.role as { permissions?: string | null })?.permissions ?? null));
   const isFull =
-    titles.some((t) => FULL_ACCESS_ROLES.some((f) => t.includes(f)) || ADMIN_TITLE_RE.test(t)) ||
+    titles.some((t) => isFullAccessTitle(t)) ||
+    (titles.some((t) => ADMIN_TITLE_RE.test(t)) && !titles.every((t) => !ADMIN_TITLE_RE.test(t) || SCOPED_MANAGER_TITLE_RE.test(t))) ||
     permLists.some((p) => p?.includes("*")) ||
     selfAdminSignal(user) ||
     (await legacyFirstAdminId()) === user.id;
   const perms: string[] | null = isFull ? ["*"] : permLists.some((p) => p === null) ? null : [...new Set(permLists.flatMap((p) => p ?? []))];
   const isAdmin = isFull;
   const isCounselor = !isAdmin && titles.some((t) => COUNSELOR_TITLE_RE.test(t));
-  const seeAllData = isAdmin || !isCounselor || (perms?.includes(SCOPE_ALL) ?? false);
+  const scope = await resolveDataScope(user, urs, perms, isAdmin);
+  const seeAllData = scope.kind === "all";
 
-  return { user, base, actor, acting, uid: user.id, roles: titles, perms, isAdmin, isCounselor, seeAllData };
+  return { user, base, actor, acting, uid: user.id, roles: titles, perms, isAdmin, isCounselor, seeAllData, scope };
 }
 
-/** شرط اسکوپ جلسات — مشاور فقط جلسات خودش (به‌عنوان مشاور یا ناظر) را می‌بیند */
+/** شرط اسکوپ جلسات — بر پایهٔ دامنهٔ دادهٔ مؤثر (نسخهٔ ۶.۱۰)
+ *  all → همه | province → جلسات مراکز آن استان‌ها | center → جلسات آن مراکز | self → جلسات خود مشاور */
 export function eventScopeWhere(acc: AccessInfo): Prisma.EventWhereInput {
   if (acc.seeAllData) return {};
+  const s = acc.scope;
+  if (s.kind === "province" && s.provinces.length) return { center: { provinceId: { in: s.provinces } } };
+  if (s.kind === "center" && s.centers.length) return { centerId: { in: s.centers } };
   return { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] };
+}
+
+/** شرط اسکوپ جلسات در SQL خام — قابل حمل بین SQLite و MySQL
+ *  alias خالی («») برای زیرکوئری‌های بدون نام مستعار */
+export function eventScopeSql(acc: AccessInfo, alias = "e"): { clause: string; args: unknown[] } {
+  if (acc.seeAllData) return { clause: "", args: [] };
+  const s = acc.scope;
+  const col = (name: string) => (alias ? `\`${alias}\`.\`${name}\`` : `\`${name}\``);
+  if (s.kind === "province" && s.provinces.length) {
+    const ph = s.provinces.map(() => "?").join(",");
+    return { clause: ` AND ${col("centerId")} IN (SELECT c.\`id\` FROM \`Centers\` c WHERE c.\`provinceId\` IN (${ph}))`, args: [...s.provinces] };
+  }
+  if (s.kind === "center" && s.centers.length) {
+    const ph = s.centers.map(() => "?").join(",");
+    return { clause: ` AND ${col("centerId")} IN (${ph})`, args: [...s.centers] };
+  }
+  return { clause: ` AND (${col("acceptorId")} = ? OR ${col("supervisorId")} = ?)`, args: [acc.uid, acc.uid] };
+}
+
+/** شرط اسکوپ بدون «AND» — برای جایگذاری داخل شرط‌های ترکیبی */
+export function eventScopeBare(acc: AccessInfo, alias = ""): { sql: string; args: unknown[] } {
+  const { clause, args } = eventScopeSql(acc, alias);
+  return { sql: clause.replace(/^\s*AND\s+/, "") || "1=1", args };
+}
+
+/** شرط اسکوپ «کاربران/مراجعان قابل مشاهده» — Prisma */
+export function clientScopeWhere(acc: AccessInfo): Prisma.UserWhereInput {
+  if (acc.seeAllData) return {};
+  const s = acc.scope;
+  if (s.kind === "province" && s.provinces.length) {
+    return {
+      OR: [
+        { provinceId: { in: s.provinces } },
+        { eventsAsClient: { some: { center: { provinceId: { in: s.provinces } } } } },
+      ],
+    };
+  }
+  if (s.kind === "center" && s.centers.length) {
+    return { eventsAsClient: { some: { centerId: { in: s.centers } } } };
+  }
+  return {
+    OR: [
+      { id: acc.uid },
+      { eventsAsClient: { some: { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] } } },
+    ],
+  };
+}
+
+/** شرط اسکوپ «کاربران/مراجعان قابل مشاهده» — SQL خام (ستون‌های جدول Users) */
+export function clientScopeSql(acc: AccessInfo, alias = "u"): { clause: string; args: unknown[] } {
+  if (acc.seeAllData) return { clause: "", args: [] };
+  const s = acc.scope;
+  const a = `\`${alias}\``;
+  if (s.kind === "province" && s.provinces.length) {
+    const ph = s.provinces.map(() => "?").join(",");
+    return {
+      clause: ` AND (${a}.\`provinceId\` IN (${ph}) OR ${a}.\`id\` IN (SELECT e.\`userId\` FROM \`Events\` e JOIN \`Centers\` c ON e.\`centerId\` = c.\`id\` WHERE c.\`provinceId\` IN (${ph})))`,
+      args: [...s.provinces, ...s.provinces],
+    };
+  }
+  if (s.kind === "center" && s.centers.length) {
+    const ph = s.centers.map(() => "?").join(",");
+    return { clause: ` AND ${a}.\`id\` IN (SELECT e.\`userId\` FROM \`Events\` e WHERE e.\`centerId\` IN (${ph}))`, args: [...s.centers] };
+  }
+  return { clause: ` AND (${a}.\`id\` = ? OR ${a}.\`id\` IN (SELECT e.\`userId\` FROM \`Events\` e WHERE e.\`acceptorId\` = ? OR e.\`supervisorId\` = ?))`, args: [acc.uid, acc.uid, acc.uid] };
+}
+
+/** شناسهٔ مراکز مجاز برای فیلترهای UI — null یعنی بدون محدودیت */
+export async function scopeCenterIds(acc: AccessInfo): Promise<number[] | null> {
+  if (acc.seeAllData) return null;
+  const s = acc.scope;
+  if (s.kind === "province" && s.provinces.length) {
+    const rows = await db.center.findMany({ where: { provinceId: { in: s.provinces } }, select: { id: true } });
+    return rows.map((c) => Number(c.id));
+  }
+  if (s.centers.length) return s.centers;
+  return null; // مشاور بدون کلینیک ثبت‌شده — محدودیتی روی فیلتر نیست
 }
 
 /** الحاق امن شرط اسکوپ به where موجود (با AND — تا OR جستجو خراب نشود) */

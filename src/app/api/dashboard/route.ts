@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { ok, fail, resolveAccess } from "@/lib/server";
+import { ok, fail, resolveAccess, eventScopeWhere } from "@/lib/server";
 import { cacheGet, cacheSet, rawScalar } from "@/lib/analytics";
 import { computeQuality, interpretKpi } from "@/lib/quality";
 
@@ -15,13 +15,13 @@ export async function GET(req: NextRequest) {
   const acc = await resolveAccess(req);
   if (!acc) return fail("UNAUTHORIZED", 401);
 
-  // اسکوپ مشاور — شاخص‌های جلسه فقط از مراجعان خودش؛ کش هم جداگانه
-  const scopeKey = acc.seeAllData ? "all" : `u${acc.uid}`;
-  const cacheKey = `dashboard:v5:${scopeKey}`;
+  // دامنهٔ داده (نسخهٔ ۶.۱۰) — شاخص‌های جلسه فقط از محدودهٔ مجاز؛ کش هم جداگانه
+  const scopeKey = acc.seeAllData ? "all" : `${acc.scope.kind}:${acc.uid}:${acc.scope.provinces.join(",")}:${acc.scope.centers.join(",")}`;
+  const cacheKey = `dashboard:v6:${scopeKey}`;
   const cached = cacheGet<Record<string, unknown>>(cacheKey);
   if (cached) return ok(cached);
 
-  const evScope = acc.seeAllData ? {} : { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] };
+  const evScope = acc.seeAllData ? {} : eventScopeWhere(acc);
 
   const now = new Date();
   const monthAgo = new Date(now.getTime() - 30 * 86400000);

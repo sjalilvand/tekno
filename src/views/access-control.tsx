@@ -10,11 +10,11 @@ import * as React from "react";
 import { PageHeader, SectionCard, StatCard, LoadingView, NameAvatar } from "@/components/shared";
 import { faNum, faDigits, jDate } from "@/lib/jalali";
 import { api, navigate, useQuery } from "@/lib/client";
-import { PERM_MODULES, PERM_GROUPS, PERM_PRESETS, PERM_ACTIONS, SCOPE_ALL, isActionStyle, toActionStyle, type PermAction } from "@/lib/permissions";
+import { PERM_MODULES, PERM_GROUPS, PERM_PRESETS, PERM_ACTIONS, SCOPE_ALL, DATA_SCOPES, dataScopeLabel, isActionStyle, toActionStyle, type PermAction } from "@/lib/permissions";
 import {
   ShieldCheck, Search, Plus, Trash2, Ban, CheckCircle2, Users, Layers, KeyRound,
   FolderOpen, Pencil, Sparkles, Grid3X3, RotateCcw, Save, Loader2, UserCheck, Clock,
-  LogIn, Eye, Globe2,
+  LogIn, Eye, Globe2, Building2, MapPin, Crosshair,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
-type RoleRow = { id: number; title: string; codeName: string; permissions: string | null; _count: { users: number } };
+type RoleRow = { id: number; title: string; codeName: string; permissions: string | null; dataScope: string | null; _count: { users: number } };
+type ScopeRef = { id: number; title: string } | null;
 
 /** رنگ چیپ‌های عملیات در ماتریس */
 const ACTION_TONE: Record<string, string> = {
@@ -49,7 +50,9 @@ function EmptyState({ icon, title, subtitle }: EmptyProps) {
 type UserRoleRow = {
   id: number; level: number; startDate: string; endDate: string | null; isSuspended: boolean;
   user: { id: number; name: string; family: string; nid: number; avatarColor: string | null; mobile: number; username: string; blocked: boolean; consultantLevel: number | null; lastLogin: string | null };
-  role: { id: number; title: string; codeName: string };
+  role: { id: number; title: string; codeName: string; dataScope: string | null };
+  province: ScopeRef;
+  center: ScopeRef;
 };
 
 export function RolesView() {
@@ -79,7 +82,7 @@ function UsersRolesTab() {
   const { toast } = useToast();
   const [q, setQ] = React.useState("");
   const [addOpen, setAddOpen] = React.useState(false);
-  const [form, setForm] = React.useState({ userId: "", roleId: "", level: "0" });
+  const [form, setForm] = React.useState({ userId: "", roleId: "", level: "0", provinceId: "", centerId: "" });
 
   const { data, loading, refetch } = useQuery<{ roleList: RoleRow[]; userRoles: UserRoleRow[]; total: number; userCount: number }>(
     () => api(`/api/roles?q=${encodeURIComponent(q)}`), [q]
@@ -87,6 +90,10 @@ function UsersRolesTab() {
   const usersQ = useQuery<{ users: { id: number; name: string; family: string; nid: number }[] }>(
     () => api("/api/users?page=1&pageSize=200"), []
   );
+  // استان‌ها و مراکز — برای تعیین محدودهٔ دادهٔ نقش‌های استانی/مرکزی (نسخهٔ ۶.۱۰)
+  const metaQ = useQuery<{ provinces: { id: number; title: string }[]; centers: { id: number; title: string; provinceTitle: string }[] }>(() => api("/api/meta"), []);
+  const selectedRole = (data?.roleList ?? []).find((r) => String(r.id) === form.roleId) ?? null;
+  const roleScope = selectedRole?.dataScope ?? "";
 
   const rows = data?.userRoles ?? [];
   const activeCount = rows.filter((r) => !r.isSuspended && !r.user.blocked).length;
@@ -94,11 +101,20 @@ function UsersRolesTab() {
 
   const assign = async () => {
     if (!form.userId || !form.roleId) return;
+    if (roleScope === "province" && !form.provinceId) { toast({ title: "برای نقش استانی، انتخاب استان الزامی است", variant: "destructive" }); return; }
+    if (roleScope === "center" && !form.centerId) { toast({ title: "برای نقش مرکزی، انتخاب مرکز/کلینیک الزامی است", variant: "destructive" }); return; }
     try {
-      await api("/api/roles", { method: "POST", body: JSON.stringify(form) });
+      await api("/api/roles", {
+        method: "POST",
+        body: JSON.stringify({
+          userId: form.userId, roleId: form.roleId, level: form.level,
+          ...(roleScope === "province" ? { provinceId: form.provinceId } : {}),
+          ...(roleScope === "center" ? { centerId: form.centerId } : {}),
+        }),
+      });
       toast({ title: "نقش با موفقیت به کاربر اختصاص یافت" });
       setAddOpen(false);
-      setForm({ userId: "", roleId: "", level: "0" });
+      setForm({ userId: "", roleId: "", level: "0", provinceId: "", centerId: "" });
       refetch();
     } catch (e) {
       toast({ title: (e as Error).message, variant: "destructive" });
@@ -120,7 +136,7 @@ function UsersRolesTab() {
 
   // ورود نیابتی — مدیر بدون رمز وارد حساب این کاربر می‌شود و کارتابلش را می‌بیند
   const enterAs = async (ur: UserRoleRow) => {
-    if (!confirm(`وارد حساب «${ur.user.name} ${ur.user.family}» می‌شوید؟ کارتابل و داده‌ها از نگاه او نمایش داده می‌شود.`)) return;
+    if (!confirm(`وارد حساب «${ur.user.name} ${ur.user.family}» می‌شوید؟ کارتابل و داده‌ها از نگاه او نمایش داده می‌شود. برای بازگشت، از بنر «بازگشت به حساب مدیر» بالای صفحه استفاده کنید.`)) return;
     try {
       await api("/api/users/impersonate", { method: "POST", body: JSON.stringify({ userId: ur.user.id }) });
       toast({ title: `وارد حساب ${ur.user.name} ${ur.user.family} شدید` });
@@ -130,6 +146,9 @@ function UsersRolesTab() {
       toast({ title: (e as Error).message, variant: "destructive" });
     }
   };
+
+  // دیالوگ کلینیک‌های همکاری (نسخهٔ ۶.۱۰)
+  const [clinicsFor, setClinicsFor] = React.useState<UserRoleRow | null>(null);
 
   return (
     <div className="space-y-4">
@@ -178,6 +197,21 @@ function UsersRolesTab() {
                   <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/80">
                     <Clock className="h-3 w-3" /> آخرین ورود: {ur.user.lastLogin ? jDate(ur.user.lastLogin) : "—"} — شروع نقش: {jDate(ur.startDate)}
                   </p>
+                  {/* محدودهٔ دادهٔ انتساب + کلینیک‌های همکاری — نسخهٔ ۶.۱۰ */}
+                  {(ur.province || ur.center) && (
+                    <p className="mt-1 flex flex-wrap items-center gap-1">
+                      {ur.province && (
+                        <Badge variant="outline" className="gap-1 border-violet-300 text-[9.5px] text-violet-700 dark:border-violet-800 dark:text-violet-300">
+                          <MapPin className="h-3 w-3" /> استان: {ur.province.title}
+                        </Badge>
+                      )}
+                      {ur.center && (
+                        <Badge variant="outline" className="gap-1 border-cyan-300 text-[9.5px] text-cyan-700 dark:border-cyan-800 dark:text-cyan-300">
+                          <Building2 className="h-3 w-3" /> مرکز: {ur.center.title}
+                        </Badge>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-col gap-1.5">
                   <div className="flex gap-1">
@@ -191,6 +225,9 @@ function UsersRolesTab() {
                       onClick={() => enterAs(ur)}
                     >
                       <LogIn className="h-4 w-4" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" title="کلینیک‌های همکاری این کاربر — عضویت همزمان در چند کلینیک" onClick={() => setClinicsFor(ur)}>
+                      <Building2 className="h-4 w-4 text-cyan-600" />
                     </Button>
                     <Button size="icon" variant="ghost" className="h-8 w-8" title={ur.isSuspended ? "رفع تعلیق" : "تعلیق نقش"} onClick={() => toggleSuspend(ur)}>
                       <Ban className={cn("h-4 w-4", ur.isSuspended ? "text-amber-500" : "text-muted-foreground")} />
@@ -237,6 +274,40 @@ function UsersRolesTab() {
               <Label className="text-xs">سطح (۰ تا ۵)</Label>
               <Input type="number" min={0} max={5} value={form.level} onChange={(e) => setForm((p) => ({ ...p, level: e.target.value }))} className="h-10" />
             </div>
+            {/* محدودهٔ داده برای نقش‌های استانی/مرکزی — نسخهٔ ۶.۱۰ */}
+            {roleScope === "province" && (
+              <div>
+                <Label className="text-xs flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-violet-600" /> استانِ تحت مدیریت</Label>
+                <Select value={form.provinceId} onValueChange={(v) => setForm((p) => ({ ...p, provinceId: v }))}>
+                  <SelectTrigger className="h-10"><SelectValue placeholder="انتخاب استان..." /></SelectTrigger>
+                  <SelectContent className="max-h-64">
+                    {(metaQ.data?.provinces ?? []).map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-[10px] leading-4 text-muted-foreground">این مدیر استان همهٔ دادهٔ مشاوران و مراکزِ همین استان را می‌بیند.</p>
+              </div>
+            )}
+            {roleScope === "center" && (
+              <div>
+                <Label className="text-xs flex items-center gap-1"><Building2 className="h-3.5 w-3.5 text-cyan-600" /> مرکز / کلینیک تحت مدیریت</Label>
+                <Select value={form.centerId} onValueChange={(v) => setForm((p) => ({ ...p, centerId: v }))}>
+                  <SelectTrigger className="h-10"><SelectValue placeholder="انتخاب مرکز..." /></SelectTrigger>
+                  <SelectContent className="max-h-64">
+                    {(metaQ.data?.centers ?? []).map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.title} — {c.provinceTitle}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-[10px] leading-4 text-muted-foreground">این مدیر کلینیک همهٔ دادهٔ همان کلینیک را می‌بیند.</p>
+              </div>
+            )}
+            {roleScope === "self" && (
+              <p className="rounded-xl bg-cyan-50 px-3 py-2 text-[10.5px] leading-5 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200">
+                این نقش فقط دادهٔ خودِ کاربر را می‌بیند. برای کارکرد همزمان در چند کلینیک، از دکمهٔ «کلینیک‌های همکاری» روی کارت کاربر استفاده کنید.
+              </p>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" size="sm" onClick={() => setAddOpen(false)}>انصراف</Button>
               <Button size="sm" className="brand-gradient text-white" onClick={assign} disabled={!form.userId || !form.roleId}>اختصاص نقش</Button>
@@ -244,7 +315,91 @@ function UsersRolesTab() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* دیالوگ کلینیک‌های همکاری — عضویت چندکلینیکی مشاور (نسخهٔ ۶.۱۰) */}
+      <ClinicsDialog
+        target={clinicsFor ? { id: clinicsFor.user.id, name: `${clinicsFor.user.name} ${clinicsFor.user.family}` } : null}
+        onClose={() => setClinicsFor(null)}
+        onSaved={() => { setClinicsFor(null); refetch(); }}
+      />
     </div>
+  );
+}
+
+// ------------------------------------------------ دیالوگ کلینیک‌های همکاری
+function ClinicsDialog({ target, onClose, onSaved }: { target: { id: number; name: string } | null; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [picked, setPicked] = React.useState<number[]>([]);
+  const [all, setAll] = React.useState<{ id: number; title: string; provinceTitle: string }[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!target) return;
+    setLoading(true);
+    api<{ centers: { id: number }[]; allCenters: { id: number; title: string; provinceTitle: string }[] }>(`/api/users/centers?userId=${target.id}`)
+      .then((d) => {
+        setPicked(d.centers.map((c) => c.id));
+        setAll(d.allCenters);
+      })
+      .catch((e) => toast({ title: (e as Error).message, variant: "destructive" }))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target?.id]);
+
+  const toggle = (id: number) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  const save = async () => {
+    if (!target) return;
+    setBusy(true);
+    try {
+      await api("/api/users/centers", { method: "PUT", body: JSON.stringify({ userId: target.id, centerIds: picked }) });
+      toast({ title: `کلینیک‌های همکاری «${target.name}» ذخیره شد` });
+      onSaved();
+    } catch (e) {
+      toast({ title: (e as Error).message, variant: "destructive" });
+    }
+    setBusy(false);
+  };
+
+  return (
+    <Dialog open={Boolean(target)} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg p-6" dir="rtl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-right">
+            <Building2 className="h-4 w-4 text-cyan-600" /> کلینیک‌های همکاری — {target?.name}
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-[11px] leading-5 text-muted-foreground">
+          یک مشاور می‌تواند همزمان در چند کلینیک کار کند. داده‌ها بر اساس همین عضویت تفکیک می‌شوند —
+          در فهرست جلسات و گزارش‌ها می‌تواند دادهٔ هر کلینیک را جداگانه ببیند.
+        </p>
+        {loading ? <LoadingView label="در حال بارگذاری مراکز..." /> : (
+          <div className="max-h-72 space-y-1 overflow-y-auto rounded-xl border p-2">
+            {all.map((c) => {
+              const on = picked.includes(c.id);
+              return (
+                <label key={c.id} className={cn(
+                  "flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-[12px] transition-colors hover:bg-muted/60",
+                  on && "bg-cyan-50 dark:bg-cyan-950/30"
+                )}>
+                  <input type="checkbox" checked={on} onChange={() => toggle(c.id)} className="h-4 w-4 accent-cyan-600" />
+                  <span className="font-bold">{c.title}</span>
+                  <span className="text-[10px] text-muted-foreground">{c.provinceTitle}</span>
+                </label>
+              );
+            })}
+            {all.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">مرکزی ثبت نشده است.</p>}
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>انصراف</Button>
+          <Button size="sm" className="brand-gradient text-white" onClick={save} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} ذخیره ({faNum(picked.length)} کلینیک)
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -254,8 +409,10 @@ function RolesTab() {
   const [open, setOpen] = React.useState(false);
   const [title, setTitle] = React.useState("");
   const [preset, setPreset] = React.useState("consultant");
+  const [newScope, setNewScope] = React.useState("");
   const [editRole, setEditRole] = React.useState<RoleRow | null>(null);
   const [editTitle, setEditTitle] = React.useState("");
+  const [editScope, setEditScope] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
   const { data, loading, refetch } = useQuery<{ roleList: RoleRow[] }>(() => api("/api/roles"), []);
@@ -265,10 +422,11 @@ function RolesTab() {
     setBusy(true);
     try {
       const p = PERM_PRESETS.find((x) => x.key === preset);
-      await api("/api/roles", { method: "POST", body: JSON.stringify({ title, permissions: p?.modules ?? null }) });
+      await api("/api/roles", { method: "POST", body: JSON.stringify({ title, permissions: p?.modules ?? null, dataScope: newScope }) });
       toast({ title: `نقش «${title}» ساخته شد` });
       setOpen(false);
       setTitle("");
+      setNewScope("");
       refetch();
     } catch (e) {
       toast({ title: (e as Error).message, variant: "destructive" });
@@ -278,8 +436,8 @@ function RolesTab() {
 
   const rename = async () => {
     if (!editRole || !editTitle.trim()) return;
-    await api("/api/roles", { method: "PUT", body: JSON.stringify({ id: editRole.id, title: editTitle }) });
-    toast({ title: "عنوان نقش بروزرسانی شد" });
+    await api("/api/roles", { method: "PUT", body: JSON.stringify({ id: editRole.id, title: editTitle, dataScope: editScope }) });
+    toast({ title: "نقش بروزرسانی شد" });
     setEditRole(null);
     refetch();
   };
@@ -314,7 +472,7 @@ function RolesTab() {
                     <ShieldCheck className="h-5 w-5" />
                   </span>
                   <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                    <Button size="icon" variant="ghost" className="h-8 w-8" title="ویرایش عنوان" onClick={() => { setEditRole(r); setEditTitle(r.title); }}>
+                    <Button size="icon" variant="ghost" className="h-8 w-8" title="ویرایش عنوان و دامنهٔ داده" onClick={() => { setEditRole(r); setEditTitle(r.title); setEditScope(r.dataScope ?? ""); }}>
                       <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
                     </Button>
                     <Button size="icon" variant="ghost" className="h-8 w-8" title="حذف نقش" onClick={() => remove(r)}>
@@ -324,13 +482,25 @@ function RolesTab() {
                 </div>
                 <p className="mt-3 text-[14px] font-extrabold">{r.title}</p>
                 <p className="text-[10px] text-muted-foreground" dir="ltr">{r.codeName}</p>
-                <div className="mt-3 flex items-center gap-1.5">
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
                   <Badge variant="secondary" className="text-[10px]">{faNum(r._count.users)} کاربر</Badge>
                   {full ? (
                     <Badge className="bg-emerald-100 text-[10px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><Sparkles className="ml-1 h-3 w-3" /> دسترسی کامل</Badge>
                   ) : (
                     <Badge variant="outline" className="text-[10px]">{faNum(perms?.length ?? 0)} ماژول مجاز</Badge>
                   )}
+                  {/* دامنهٔ داده — نسخهٔ ۶.۱۰ */}
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "gap-1 text-[9.5px]",
+                      (r.dataScope ?? "") === "province" && "border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300",
+                      (r.dataScope ?? "") === "center" && "border-cyan-300 text-cyan-700 dark:border-cyan-800 dark:text-cyan-300",
+                      (r.dataScope ?? "") === "self" && "border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300",
+                    )}
+                  >
+                    <Crosshair className="h-3 w-3" /> {dataScopeLabel(r.dataScope)}
+                  </Badge>
                 </div>
               </div>
             );
@@ -357,6 +527,20 @@ function RolesTab() {
                 بعداً می‌توانید در تب «ماتریس دسترسی» هر ماژول را جداگانه فعال/غیرفعال کنید.
               </p>
             </div>
+            {/* دامنهٔ داده — نسخهٔ ۶.۱۰ */}
+            <div>
+              <Label className="text-xs flex items-center gap-1"><Crosshair className="h-3.5 w-3.5 text-primary" /> دامنهٔ داده — چه نوع داده‌ای را ببیند؟</Label>
+              <Select value={newScope} onValueChange={setNewScope}>
+                <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DATA_SCOPES.map((s) => <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                {DATA_SCOPES.find((s) => s.key === newScope)?.hint}
+                {newScope === "province" || newScope === "center" ? " استان/مرکز دقیق هنگام انتساب نقش به کاربر انتخاب می‌شود." : ""}
+              </p>
+            </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" size="sm" onClick={() => setOpen(false)}>انصراف</Button>
               <Button size="sm" className="brand-gradient text-white" onClick={create} disabled={!title.trim() || busy}>
@@ -367,12 +551,28 @@ function RolesTab() {
         </DialogContent>
       </Dialog>
 
-      {/* دیالوگ ویرایش عنوان */}
+      {/* دیالوگ ویرایش عنوان و دامنهٔ داده */}
       <Dialog open={Boolean(editRole)} onOpenChange={(o) => !o && setEditRole(null)}>
-        <DialogContent className="max-w-sm p-6" dir="rtl">
-          <DialogHeader><DialogTitle className="text-right">ویرایش عنوان نقش</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-md p-6" dir="rtl">
+          <DialogHeader><DialogTitle className="text-right">ویرایش نقش</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="h-10" />
+            <div>
+              <Label className="text-xs">عنوان نقش</Label>
+              <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="h-10" />
+            </div>
+            <div>
+              <Label className="text-xs flex items-center gap-1"><Crosshair className="h-3.5 w-3.5 text-primary" /> دامنهٔ داده — چه نوع داده‌ای را ببیند؟</Label>
+              <Select value={editScope} onValueChange={setEditScope}>
+                <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DATA_SCOPES.map((s) => <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                {DATA_SCOPES.find((s) => s.key === editScope)?.hint}
+                {editScope === "province" || editScope === "center" ? " استان/مرکز دقیق در کارت هر کاربر (تب «کاربران و نقش‌ها») مشخص می‌شود." : ""}
+              </p>
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setEditRole(null)}>انصراف</Button>
               <Button size="sm" onClick={rename} disabled={!editTitle.trim()}>ذخیره</Button>

@@ -20,6 +20,13 @@ export async function GET(req: NextRequest) {
     acting: acc.acting && acc.actor
       ? { actorId: acc.actor.id, actorName: `${acc.actor.name} ${acc.actor.family}` }
       : null,
-    scope: { seesAllData: acc.seeAllData, isCounselor: acc.isCounselor },
+    // دامنهٔ دادهٔ مؤثر (نسخهٔ ۶.۱۰) — برای برچسب‌ها و تفکیک کلینیک‌ها در UI
+    scope: {
+      seesAllData: acc.seeAllData,
+      isCounselor: acc.isCounselor,
+      kind: acc.scope.kind,
+      centers: acc.scope.centers,
+      provinces: acc.scope.provinces,
+    },
   });
 }

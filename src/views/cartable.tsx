@@ -16,7 +16,7 @@ import {
   FolderOpen, Search, User, CalendarCheck, History, Lightbulb, FileText,
   Wallet, Siren, ShieldCheck, Clock, FileImage, Pill, CheckCircle2, XCircle,
   AlertTriangle, ArrowLeftRight, Mail, Smartphone, ExternalLink, Loader2,
-  Copy, IdCard, Smartphone as MobileIcon,
+  Copy, IdCard, Smartphone as MobileIcon, ArrowRight,
 } from "lucide-react";
 
 export function CopyChip({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
@@ -154,6 +154,15 @@ export function CartableView() {
 
   const search = () => loadList(q);
 
+  // بازگشت از پرونده به فهرست کارتابل (نسخهٔ ۶.۱۰) — دکمهٔ «بازگشت به کارتابل»
+  const backToList = () => {
+    setSelected(null);
+    setDossier(null);
+    setDocError(null);
+    if (window.location.hash.includes("cartable?")) window.location.hash = "#/cartable";
+    loadList("");
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -244,7 +253,7 @@ export function CartableView() {
               </div>
             </SectionCard>
           )}
-          {!loadingDoc && dossier && <DossierPanel d={dossier} />}
+          {!loadingDoc && dossier && <DossierPanel d={dossier} onBack={backToList} />}
         </div>
       </div>
     </div>
@@ -252,10 +261,17 @@ export function CartableView() {
 }
 
 // ================================================================ پرونده
-function DossierPanel({ d }: { d: Dossier }) {
+function DossierPanel({ d, onBack }: { d: Dossier; onBack: () => void }) {
   const p = d.person;
   return (
     <div className="space-y-4">
+      {/* نوار بازگشت به کارتابل — نسخهٔ ۶.۱۰ */}
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 rounded-full border bg-card px-3.5 py-1.5 text-[11.5px] font-bold text-muted-foreground shadow-sm transition-all hover:border-ring hover:text-foreground"
+      >
+        <ArrowRight className="h-3.5 w-3.5" /> بازگشت به کارتابل
+      </button>
       {/* سربرگ پرونده */}
       <SectionCard bodyClass="p-4">
         <div className="flex flex-wrap items-center gap-4">

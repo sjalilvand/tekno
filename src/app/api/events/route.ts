@@ -43,7 +43,8 @@ export async function GET(req: NextRequest) {
       skip: (page - 1) * pageSize, take: pageSize,
       select: selectEvent,
     }),
-    db.event.groupBy({ by: ["status"], _count: true }),
+    // نسخهٔ ۶.۱۰ — آمار وضعیت هم در همان محدودهٔ دادهٔ کاربر
+    db.event.groupBy({ by: ["status"], _count: true, where: applyEventScope({}, acc) }),
   ]);
 
   return ok({

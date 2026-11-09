@@ -252,7 +252,8 @@ function ActingBanner({ actorName }: { actorName: string }) {
     setBusy(true);
     try {
       await api("/api/users/impersonate", { method: "DELETE" });
-      window.location.hash = "#/users";
+      // نسخهٔ ۶.۱۰ — بازگشت مستقیم به کارتابلِ مدیر (نه صفحهٔ کاربران)
+      window.location.hash = "#/cartable";
       window.location.reload();
     } catch { setBusy(false); }
   };

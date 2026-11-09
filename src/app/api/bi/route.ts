@@ -17,7 +17,11 @@ export async function GET(req: NextRequest) {
   if (!acc) return fail("UNAUTHORIZED", 401);
   const sp = req.nextUrl.searchParams;
   try {
-    const payload = await buildBiPayload(sp.get("provinceId"), sp.get("from"), sp.get("to"), acc.seeAllData ? null : acc.uid);
+    const payload = await buildBiPayload(
+      sp.get("provinceId"), sp.get("from"), sp.get("to"),
+      acc.seeAllData ? null : (acc.scope.kind === "self" ? acc.uid : null),
+      acc.seeAllData ? null : { provinces: acc.scope.provinces, centers: acc.scope.centers },
+    );
     return ok(payload);
   } catch {
     return fail("خطا در محاسبهٔ داشبورد توصیفی", 500);

@@ -73,6 +73,28 @@ export type PermAction = (typeof PERM_ACTIONS)[number]["key"];
 /** کلید ویژه — مشاور با این کلید، همهٔ داده‌ها (نه فقط مراجعان خودش) را می‌بیند */
 export const SCOPE_ALL = "scope:all";
 
+// =====================================================================
+// دامنهٔ دادهٔ نقش (نسخهٔ ۶.۱۰) — تعریف اینکه هر نقش چه نوع داده‌ای را می‌بیند
+//   all      — همهٔ داده‌ها (مدیر سامانه)
+//   province — فقط دادهٔ استان مشخص‌شده (مدیر استان)
+//   center   — فقط دادهٔ مرکز/کلینیک مشخص‌شده (مدیر کلینیک)
+//   self     — فقط دادهٔ خودِ کاربر (مشاور — مراجعان خودش)
+//   ""       — خودکار: مطابق رفتار گذشته (مشاور فقط خودش، بقیه همه)
+// =====================================================================
+export const DATA_SCOPES = [
+  { key: "", label: "خودکار (مطابق گذشته)", hint: "نقش‌های مشاور فقط دادهٔ خودشان؛ سایر نقش‌ها همهٔ داده‌ها" },
+  { key: "all", label: "همهٔ داده‌ها", hint: "دیدن دادهٔ همهٔ استان‌ها و مراکز — فقط برای مدیر سامانه" },
+  { key: "province", label: "دادهٔ یک استان", hint: "مدیر استان — همهٔ دادهٔ مشاوران و مراکز همان استان" },
+  { key: "center", label: "دادهٔ یک مرکز/کلینیک", hint: "مدیر کلینیک — همهٔ دادهٔ همان کلینیک" },
+  { key: "self", label: "فقط دادهٔ خود کاربر", hint: "مشاور — فقط مراجعان و جلسات خودش" },
+] as const;
+
+export const DATA_SCOPE_KEYS: string[] = ["", "all", "province", "center", "self"];
+
+export function dataScopeLabel(key: string | null | undefined): string {
+  return DATA_SCOPES.find((s) => s.key === (key ?? ""))?.label ?? "خودکار";
+}
+
 /** آیا آرایه در قالب عملیاتی جدید است؟ (حداقل یک کلید دارای «:») */
 export function isActionStyle(perms: string[] | null | undefined): boolean {
   return Boolean(perms && perms.some((p) => p.includes(":")));
@@ -110,8 +132,29 @@ export const COUNSELOR_TITLE_RE = /مشاور|روانپزشک|روانشناس|
 /** الگوی نقش‌های مدیریتی — کلیدهای حساس سیستم (نقش‌ها/کاربران/وب‌سرویس) */
 export const ADMIN_TITLE_RE = /مدیر|ادمین|admin|superuser/i;
 
+/** الگوی نقش‌های مدیریتیِ محدود (نسخهٔ ۶.۱۰) — مدیر استان/کلینیک ادمین کامل نیستند؛
+ *  دامنهٔ داده‌شان از فیلد dataScope نقش تعیین می‌شود. */
+export const SCOPED_MANAGER_TITLE_RE = /مدیر\s*(استان|کلینیک|مرکز)|ناظر\s*استان/;
+
 /** نقش‌های همیشه‌کامل — بدون نیاز به ماتریس */
 export const FULL_ACCESS_ROLES = ["مدیر سامانه", "مدیر سیستم", "مدیر کل", "admin", "Administrator"];
+
+/** تطبیق دقیق عنوان نقش با فهرست نقش‌های همیشه‌کامل (نسخهٔ ۶.۱۰)
+ *  «مدیر کلینیک» نباید با «مدیر کل» تطبیق کند — پس از تطبیق باید مرز واژه باشد. */
+export function isFullAccessTitle(title: string | null | undefined): boolean {
+  const norm = (title ?? "").replace(/\u200c/g, " ").trim();
+  if (!norm) return false;
+  return FULL_ACCESS_ROLES.some((f) => {
+    const fn = f.replace(/\u200c/g, " ");
+    let i = norm.indexOf(fn);
+    while (i !== -1) {
+      const after = norm[i + fn.length];
+      if (after === undefined || !/[\u0600-\u06FFa-zA-Z0-9]/.test(after)) return true;
+      i = norm.indexOf(fn, i + 1);
+    }
+    return false;
+  });
+}
 
 /** پیش‌تنظیم‌های آمادهٔ نقش — برای دکمه‌های سریع در ماتریس */
 export const PERM_PRESETS: { key: string; label: string; modules: string[] }[] = [

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { ok, fail, params, resolveAccess } from "@/lib/server";
+import { ok, fail, params, resolveAccess, applyEventScope } from "@/lib/server";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
@@ -8,9 +8,8 @@ export async function GET(req: NextRequest) {
   if (!acc) return fail("UNAUTHORIZED", 401);
   const { q, page, pageSize } = params(req);
 
-  const where: Prisma.EventReserveWhereInput = {};
-  // اسکوپ مشاور — فقط رزروهای جلسات خودش
-  if (!acc.seeAllData) where.event = { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] };
+  // اسکوپ داده (نسخهٔ ۶.۱۰) — رزروهای جلسات در محدودهٔ مجاز
+  const where: Prisma.EventReserveWhereInput = applyEventScope({}, acc);
   if (q) {
     where.OR = [
       { event: { user: { name: { contains: q } } } },

@@ -1,13 +1,12 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { ok, fail, resolveAccess, hasModuleAccess } from "@/lib/server";
+import { ok, fail, resolveAccess, hasModuleAccess, clientScopeWhere, eventScopeWhere } from "@/lib/server";
 
 // =====================================================================
 // کارتابل متقاضیان — جستجوی هوشمند بر اساس نام، نام خانوادگی، کد ملی، همراه
-// نسخهٔ ۶.۵ — دسترسی بر پایهٔ resolveAccess:
-//   مدیر/مجاز با ماتریس «cartable» → همهٔ متقاضیان
-//   مشاور → فقط مراجعان خودش (جلساتی که مشاور یا ناظرش بوده)
-//   کاربر عادی → فقط پروندهٔ شخصی خودش
+// نسخهٔ ۶.۱۰ — دسترسی بر پایهٔ دامنهٔ دادهٔ مؤثر:
+//   مدیر → همهٔ متقاضیان | مدیر استان → متقاضیان استان | مدیر کلینیک → متقاضیان کلینیک
+//   مشاور → فقط مراجعان خودش | کاربر عادی → فقط پروندهٔ شخصی خودش
 // کد ملی از جدول کاربر؛ اگر صفر بود از جلسات (Events.nid) بازیابی می‌شود
 // =====================================================================
 
@@ -28,24 +27,19 @@ export async function GET(req: NextRequest) {
     return ok({ privileged: false, rows: rows.map(toRow) });
   }
 
-  // اسکوپ مشاور — فقط مراجعان خودش
-  let scopeIds: number[] | null = null;
-  if (!acc.seeAllData) {
-    const mine = await db.event.findMany({
-      where: { OR: [{ acceptorId: acc.uid }, { supervisorId: acc.uid }] },
-      select: { userId: true },
-      distinct: ["userId"],
-    });
-    scopeIds = [...new Set([...mine.map((e) => e.userId), acc.uid])];
-    if (scopeIds.length === 0) return ok({ privileged: true, scoped: true, rows: [] });
+  // اسکوپ داده — چه متقاضیانی دیده شوند (نسخهٔ ۶.۱۰)
+  const scoped = !acc.seeAllData;
+  if (scoped) {
+    const hasAny = await db.user.findFirst({ where: clientScopeWhere(acc), select: { id: true } });
+    if (!hasAny) return ok({ privileged: true, scoped: true, rows: [] });
   }
 
-  const scopeWhere = scopeIds ? { id: { in: scopeIds } } : {};
+  const scopeWhere = scoped ? clientScopeWhere(acc) : {};
   // نسخهٔ ۶.۸ — فقط متقاضیان واقعی: کاربرانی که حداقل یک جلسه به‌عنوان مراجع
   // دارند؛ دیگر حساب مشاوران/منشی/مدیران در فهرست کارتابل نمی‌آید.
-  // (در حالت اسکوپ مشاور، خودِ مشاور هم برای کارتابل شخصی‌اش می‌ماند)
-  const applicantOnly = scopeIds
-    ? { OR: [{ eventsAsClient: { some: {} } }, { id: acc.uid }] }
+  // (در حالت اسکوپ، خودِ کاربر هم برای کارتابل شخصی‌اش می‌ماند)
+  const applicantOnly = scoped
+    ? { OR: [{ eventsAsClient: { some: eventScopeWhere(acc) } }, { id: acc.uid }] }
     : { eventsAsClient: { some: {} } };
 
   if (!q) {
@@ -56,7 +50,7 @@ export async function GET(req: NextRequest) {
       orderBy: [{ signupDate: "desc" }],
       take: 60,
     });
-    return ok({ privileged: true, scoped: Boolean(scopeIds), rows: rows.map(toRow) });
+    return ok({ privileged: true, scoped, rows: rows.map(toRow) });
   }
 
   const rows = await db.user.findMany({
@@ -78,7 +72,7 @@ export async function GET(req: NextRequest) {
     select: userSelect,
     take: 30,
   });
-  return ok({ privileged: true, scoped: Boolean(scopeIds), rows: rows.map(toRow) });
+  return ok({ privileged: true, scoped, rows: rows.map(toRow) });
 }
 
 const userSelect = {

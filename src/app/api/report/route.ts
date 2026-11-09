@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, resolveAccess, eventScopeWhere, eventScopeSql, clientScopeWhere, clientScopeSql, type AccessInfo } from "@/lib/server";
 import { monthLabel } from "@/lib/jalali";
 import { normalizeDateInput } from "@/lib/jdate";
 import { rawRows, sqlLocalDate, num } from "@/lib/analytics";
@@ -13,6 +13,8 @@ import { buildXlsx } from "@/lib/xlsx";
 // • حالت «جزئیات» صفحه‌بندی‌شده + حالت «خلاصه» با GROUP BY داخل دیتابیس
 // • خروجی CSV (سازگار با اکسل فارسی) و اکسل XLSX راست‌به‌چپ
 // • همهٔ ستون‌ها/فیلترها از وایت‌لیست می‌آیند — امن در برابر تزریق
+// • نسخهٔ ۶.۱۰ — هر گزارش فقط در محدودهٔ دامنهٔ دادهٔ کاربر:
+//   مدیر همه / مدیر استان دادهٔ استان / مدیر کلینیک دادهٔ کلینیک / مشاور فقط دادهٔ خودش
 // =====================================================================
 
 type SortDir = "asc" | "desc";
@@ -62,8 +64,8 @@ const faBool = (v: boolean | null | undefined) => (v === null || v === undefined
 void faBool;
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
 
   let body: ReportBody;
   try {
@@ -87,31 +89,32 @@ export async function POST(req: NextRequest) {
   const q = String(filters.q ?? "").trim();
 
   try {
+    const ctx0 = { acc } as const;
     switch (dataset) {
       case "events":
-        return await reportEvents({ mode, body, filters, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportEvents({ ...ctx0, mode, body, filters, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
       case "finance":
-        return await reportFinance({ mode, body, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportFinance({ ...ctx0, mode, body, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
       case "users":
-        return await reportUsers({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportUsers({ ...ctx0, mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "reserves":
-        return await reportReserves({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportReserves({ ...ctx0, mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "referrals":
-        return await reportReferrals({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportReferrals({ ...ctx0, mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "sms":
-        return await reportSms({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportSms({ ...ctx0, mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "ems":
-        return await reportEms({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportEms({ ...ctx0, mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "group-events":
-        return await reportGroupEvents({ mode, body, filters, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportGroupEvents({ ...ctx0, mode, body, filters, q, serviceId, centerId, fromDate, toDate, sortDir, page, pageSize, format });
       case "logs":
-        return await reportLogs({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportLogs({ ...ctx0, mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "taxes":
-        return await reportTaxes({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportTaxes({ ...ctx0, mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "budgets":
-        return await reportBudgets({ mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportBudgets({ ...ctx0, mode, body, q, fromDate, toDate, sortDir, page, pageSize, format });
       case "reserve-requests":
-        return await reportReserveRequests({ mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
+        return await reportReserveRequests({ ...ctx0, mode, body, filters, q, fromDate, toDate, sortDir, page, pageSize, format });
       default:
         return fail("DATASET_UNKNOWN");
     }
@@ -123,6 +126,7 @@ export async function POST(req: NextRequest) {
 
 // ------------------------------------------------------------ ساختار پاسخ
 type Ctx = {
+  acc: AccessInfo; // هویت و دامنهٔ دادهٔ مؤثر — هر گزارش فقط داخل همین محدوده
   mode: "detail" | "summary";
   body: ReportBody;
   filters?: any;
@@ -136,6 +140,12 @@ type Ctx = {
   pageSize: number;
   format: "json" | "csv" | "xlsx";
 };
+
+/** افزودن شرط اسکوپ SQL به فهرست شرط‌های حالت خلاصه (که با AND به هم می‌پیوندند) */
+function pushScope(parts: string[], args: unknown[], sc: { clause: string; args: unknown[] }): void {
+  const c = sc.clause.replace(/^\s*AND\s+/, "");
+  if (c) { parts.push(`(${c})`); args.push(...sc.args); }
+}
 
 type ColDef = { label: string; type?: "date" | "money" | "bool" | "num" };
 
@@ -395,6 +405,8 @@ async function reportEvents(ctx: Ctx) {
       ...(asNum !== null ? [{ trackingCode: asNum }, { id: asNum }] : []),
     ];
   }
+  // دامنهٔ داده — مدیر همه / استان / کلینیک / مشاور فقط جلسات خودش
+  where.AND = [eventScopeWhere(ctx.acc)];
 
   const sortMap: Record<string, any> = {
     id: { id: ctx.sortDir },
@@ -432,6 +444,7 @@ async function summarizeEvents(ctx: Ctx) {
   if (ctx.filters?.status) { extra.push("e.`status` = ?"); extraArgs.push(ctx.filters?.status); }
   if (ctx.filters?.doneOnly === "1") extra.push("e.`endDate` IS NOT NULL");
   if (ctx.filters?.doneOnly === "0") extra.push("e.`endDate` IS NULL");
+  pushScope(extra, extraArgs, eventScopeSql(ctx.acc, "e")); // دامنهٔ داده
   const joins = " LEFT JOIN `Services` s ON e.`serviceId` = s.`id` LEFT JOIN `Centers` c ON e.`centerId` = c.`id` LEFT JOIN `Users` u ON e.`acceptorId` = u.`id`";
   return summarizeSql(
     ctx,
@@ -481,6 +494,7 @@ async function reportFinance(ctx: Ctx) {
     if (ctx.toDate) where.startDate.lte = ctx.toDate;
   }
   if (ctx.q) where.OR = [{ user: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } }];
+  where.AND = [eventScopeWhere(ctx.acc)]; // دامنهٔ داده
 
   const select = {
     id: true, startDate: true, status: true, userTariff: true, acceptorFee: true,
@@ -501,8 +515,11 @@ async function reportFinance(ctx: Ctx) {
 
   if (ctx.mode === "summary") {
     const { where: wsql, args } = eventWhere(ctx.q, ctx.serviceId ?? null, ctx.centerId ?? null, ctx.fromDate, ctx.toDate);
+    const scArgs: unknown[] = [];
+    const scParts: string[] = [];
+    pushScope(scParts, scArgs, eventScopeSql(ctx.acc, "e")); // دامنهٔ داده
     const joins = " LEFT JOIN `Services` s ON e.`serviceId` = s.`id` LEFT JOIN `Centers` c ON e.`centerId` = c.`id`";
-    return summarizeSql(ctx, { from: "`Events` e", joins, where: wsql, args }, FINANCE_GROUPS, FINANCE_METRICS);
+    return summarizeSql(ctx, { from: "`Events` e", joins, where: wsql + (scParts.length ? " AND " + scParts.join(" AND ") : ""), args: [...args, ...scArgs] }, FINANCE_GROUPS, FINANCE_METRICS);
   }
 
   const res = await detailResponse(
@@ -561,6 +578,8 @@ async function reportUsers(ctx: Ctx) {
       ...(asNum !== null ? [{ nid: asNum }, { mobile: asNum }] : []),
     ];
   }
+  // دامنهٔ داده — چه کاربرانی دیده شود (نسخهٔ ۶.۱۰)
+  where.AND = [clientScopeWhere(ctx.acc)];
 
   if (ctx.mode === "summary") {
     const parts: string[] = ["1=1"];
@@ -570,6 +589,7 @@ async function reportUsers(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("u.`signupDate` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("u.`signupDate` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("(u.`name` LIKE ? OR u.`family` LIKE ? OR u.`username` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`, `%${ctx.q}%`); }
+    pushScope(parts, args, clientScopeSql(ctx.acc, "u")); // دامنهٔ داده
     return summarizeSql(ctx, { from: "`Users` u", where: `WHERE ${parts.join(" AND ")}`, args }, USER_GROUPS, USER_METRICS);
   }
 
@@ -615,6 +635,8 @@ async function reportReserves(ctx: Ctx) {
     if (ctx.toDate) where.date.lte = ctx.toDate;
   }
   if (ctx.q) where.event = { user: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } };
+  // دامنهٔ داده — رزروهای جلسات در محدودهٔ مجاز
+  where.AND = [{ event: eventScopeWhere(ctx.acc) }];
 
   const select = {
     id: true, date: true,
@@ -634,6 +656,7 @@ async function reportReserves(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("r.`date` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("r.`date` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("(ru.`name` LIKE ? OR ru.`family` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    pushScope(parts, args, eventScopeSql(ctx.acc, "e")); // دامنهٔ داده
     return summarizeSql(
       ctx,
       { from: "`EventReserves` r", joins: " LEFT JOIN `Events` e ON r.`eventId` = e.`id` LEFT JOIN `Users` ru ON e.`userId` = ru.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
@@ -697,6 +720,15 @@ async function reportReferrals(ctx: Ctx) {
       ...(asNum !== null ? [{ refId: asNum }] : []),
     ];
   }
+  // دامنهٔ داده — ارجاعات استان/مرکز/مشاور پذیرنده (نسخهٔ ۶.۱۰)
+  {
+    const s = ctx.acc.scope;
+    if (!ctx.acc.seeAllData) {
+      if (s.kind === "province" && s.provinces.length) where.provinceId = { in: s.provinces };
+      else if (s.kind === "center" && s.centers.length) where.centerId = { in: s.centers };
+      else where.acceptorId = ctx.acc.uid;
+    }
+  }
 
   const select = {
     id: true, refId: true, creationDate: true, userName: true, userNid: true,
@@ -713,6 +745,15 @@ async function reportReferrals(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("r.`creationDate` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("r.`creationDate` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("(r.`userName` LIKE ? OR r.`description` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    // دامنهٔ داده — ارجاعات
+    {
+      const s = ctx.acc.scope;
+      if (!ctx.acc.seeAllData) {
+        if (s.kind === "province" && s.provinces.length) { parts.push("r.`provinceId` IN (" + s.provinces.map(() => "?").join(",") + ")"); args.push(...s.provinces); }
+        else if (s.kind === "center" && s.centers.length) { parts.push("r.`centerId` IN (" + s.centers.map(() => "?").join(",") + ")"); args.push(...s.centers); }
+        else { parts.push("r.`acceptorId` = ?"); args.push(ctx.acc.uid); }
+      }
+    }
     return summarizeSql(
       ctx,
       { from: "`Referrs` r", joins: " LEFT JOIN `Services` s ON r.`serviceId` = s.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
@@ -770,6 +811,10 @@ async function reportSms(ctx: Ctx) {
       ...(asNum !== null ? [{ number: asNum }] : []),
     ];
   }
+  // دامنهٔ داده — مشاور فقط پیامک‌های خودش؛ مدیران استان/مرکز همه را می‌بینند
+  if (!ctx.acc.seeAllData && ctx.acc.scope.kind === "self") {
+    where.AND = [{ OR: [{ senderId: ctx.acc.uid }, { receiverId: ctx.acc.uid }] }];
+  }
 
   const select = {
     id: true, createTime: true, number: true, message: true, efforts: true, status: true, response: true,
@@ -785,6 +830,7 @@ async function reportSms(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("s.`createTime` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("s.`createTime` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("s.`message` LIKE ?"); args.push(`%${ctx.q}%`); }
+    if (!ctx.acc.seeAllData && ctx.acc.scope.kind === "self") { parts.push("(s.`senderId` = ? OR s.`receiverId` = ?)"); args.push(ctx.acc.uid, ctx.acc.uid); }
     return summarizeSql(ctx, { from: "`SMS` s", where: `WHERE ${parts.join(" AND ")}`, args }, SMS_GROUPS, SMS_METRICS);
   }
 
@@ -848,6 +894,8 @@ async function reportEms(ctx: Ctx) {
       ...(asNum !== null ? [{ event: { nid: asNum } }] : []),
     ];
   }
+  // دامنهٔ داده — موارد حادِ جلسات در محدودهٔ مجاز
+  where.AND = [{ event: eventScopeWhere(ctx.acc) }];
 
   const select = {
     id: true, dateTime: true, emsType: true, suicidalFrom: true, severity: true,
@@ -886,6 +934,7 @@ async function reportEms(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("ee.`dateTime` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("ee.`dateTime` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("(eu.`name` LIKE ? OR eu.`family` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    pushScope(parts, args, eventScopeSql(ctx.acc, "e")); // دامنهٔ داده
     return summarizeSql(
       ctx,
       { from: "`EventsEms` ee", joins: " LEFT JOIN `Events` e ON ee.`eventId` = e.`id` LEFT JOIN `Users` eu ON e.`userId` = eu.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
@@ -955,6 +1004,18 @@ async function reportGroupEvents(ctx: Ctx) {
       { group: { title: { contains: ctx.q } } },
     ];
   }
+  // دامنهٔ داده — جلسات گروهی استان/مرکز/مشاور پذیرنده (نسخهٔ ۶.۱۰)
+  if (!ctx.acc.seeAllData) {
+    const s = ctx.acc.scope;
+    if (s.kind === "province" && s.provinces.length) {
+      const cs = await db.center.findMany({ where: { provinceId: { in: s.provinces } }, select: { id: true } });
+      where.AND = [{ centerId: { in: cs.map((c) => Number(c.id)) } }];
+    } else if (s.kind === "center" && s.centers.length) {
+      where.AND = [{ centerId: { in: s.centers } }];
+    } else {
+      where.AND = [{ OR: [{ acceptorId: ctx.acc.uid }, { supervisorId: ctx.acc.uid }] }];
+    }
+  }
 
   const select = {
     id: true, sessionNumber: true, topic: true, startDate: true, endDate: true, status: true,
@@ -998,9 +1059,25 @@ async function reportGroupEvents(ctx: Ctx) {
     if (ctx.toDate) { parts.push("g.`startDate` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("g.`topic` LIKE ?"); args.push(`%${ctx.q}%`); }
     const doneF = ctx.filters?.doneOnly === "1" ? " AND g.`endDate` IS NOT NULL" : ctx.filters?.doneOnly === "0" ? " AND g.`endDate` IS NULL" : "";
+    // دامنهٔ داده
+    let scopeSql = "";
+    const scArgs: unknown[] = [];
+    if (!ctx.acc.seeAllData) {
+      const s = ctx.acc.scope;
+      if (s.kind === "province" && s.provinces.length) {
+        scopeSql = " AND g.`centerId` IN (SELECT c2.`id` FROM `Centers` c2 WHERE c2.`provinceId` IN (" + s.provinces.map(() => "?").join(",") + "))";
+        scArgs.push(...s.provinces);
+      } else if (s.kind === "center" && s.centers.length) {
+        scopeSql = " AND g.`centerId` IN (" + s.centers.map(() => "?").join(",") + ")";
+        scArgs.push(...s.centers);
+      } else {
+        scopeSql = " AND (g.`acceptorId` = ? OR g.`supervisorId` = ?)";
+        scArgs.push(ctx.acc.uid, ctx.acc.uid);
+      }
+    }
     return summarizeSql(
       ctx,
-      { from: "`GroupEvents` g", joins: " LEFT JOIN `Centers` c ON g.`centerId` = c.`id` LEFT JOIN `Users` u ON g.`acceptorId` = u.`id`", where: `WHERE ${parts.join(" AND ")}` + doneF, args },
+      { from: "`GroupEvents` g", joins: " LEFT JOIN `Centers` c ON g.`centerId` = c.`id` LEFT JOIN `Users` u ON g.`acceptorId` = u.`id`", where: `WHERE ${parts.join(" AND ")}` + doneF + scopeSql, args: [...args, ...scArgs] },
       GROUP_GROUPS, GROUP_METRICS,
     );
   }
@@ -1054,6 +1131,8 @@ async function reportLogs(ctx: Ctx) {
     if (ctx.toDate) where.timestamp.lte = ctx.toDate;
   }
   if (ctx.q) where.OR = [{ description: { contains: ctx.q } }, { category: { contains: ctx.q } }, { user: { OR: [{ name: { contains: ctx.q } }, { family: { contains: ctx.q } }] } }];
+  // دامنهٔ داده — مشاور فقط لاگ فعالیت خودش؛ مدیران همه را می‌بینند
+  if (!ctx.acc.seeAllData && ctx.acc.scope.kind === "self") where.userId = ctx.acc.uid;
 
   const select = {
     id: true, timestamp: true, category: true, description: true, level: true, ip: true,
@@ -1068,6 +1147,7 @@ async function reportLogs(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("l.`timestamp` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("l.`timestamp` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("l.`description` LIKE ?"); args.push(`%${ctx.q}%`); }
+    if (!ctx.acc.seeAllData && ctx.acc.scope.kind === "self") { parts.push("l.`userId` = ?"); args.push(ctx.acc.uid); }
     return summarizeSql(ctx, { from: "`Log` l", where: `WHERE ${parts.join(" AND ")}`, args }, LOG_GROUPS, LOG_METRICS);
   }
 
@@ -1125,6 +1205,17 @@ async function reportTaxes(ctx: Ctx) {
       ...(asNum !== null ? [{ nid: asNum }] : []),
     ];
   }
+  // دامنهٔ داده — مشاور فقط مالیات خودش؛ مدیران استان/مرکز همهٔ مشاوران حوزهٔ خود
+  if (!ctx.acc.seeAllData) {
+    if (ctx.acc.scope.kind === "self") where.userId = ctx.acc.uid;
+    else if (ctx.acc.scope.kind === "province" && ctx.acc.scope.provinces.length) {
+      const us = await db.user.findMany({ where: { provinceId: { in: ctx.acc.scope.provinces } }, select: { id: true } });
+      where.userId = { in: us.map((u) => Number(u.id)) };
+    } else if (ctx.acc.scope.kind === "center" && ctx.acc.scope.centers.length) {
+      const us = await db.user.findMany({ where: { eventsAsAcceptor: { some: { centerId: { in: ctx.acc.scope.centers } } } }, select: { id: true } });
+      where.userId = { in: us.map((u) => Number(u.id)) };
+    }
+  }
 
   const select = {
     id: true, nid: true, year: true, month: true, taxAmount: true, totalPayment: true, exemptionMonths: true, createdAt: true,
@@ -1145,6 +1236,17 @@ async function reportTaxes(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("t.`createdAt` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("t.`createdAt` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("(u.`name` LIKE ? OR u.`family` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    // دامنهٔ داده — مالیات
+    if (!ctx.acc.seeAllData) {
+      if (ctx.acc.scope.kind === "self") { parts.push("t.`userId` = ?"); args.push(ctx.acc.uid); }
+      else if (ctx.acc.scope.kind === "province" && ctx.acc.scope.provinces.length) {
+        parts.push("t.`userId` IN (SELECT u2.`id` FROM `Users` u2 WHERE u2.`provinceId` IN (" + ctx.acc.scope.provinces.map(() => "?").join(",") + "))");
+        args.push(...ctx.acc.scope.provinces);
+      } else if (ctx.acc.scope.kind === "center" && ctx.acc.scope.centers.length) {
+        parts.push("t.`userId` IN (SELECT e2.`acceptorId` FROM `Events` e2 WHERE e2.`centerId` IN (" + ctx.acc.scope.centers.map(() => "?").join(",") + "))");
+        args.push(...ctx.acc.scope.centers);
+      }
+    }
     return summarizeSql(
       ctx,
       { from: "`ConsultantTax` t", joins: " LEFT JOIN `Users` u ON t.`userId` = u.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
@@ -1201,6 +1303,12 @@ async function reportBudgets(ctx: Ctx) {
     if (ctx.toDate) where.startDate.lte = ctx.toDate;
   }
   if (ctx.q) where.OR = [{ title: { contains: ctx.q } }];
+  // دامنهٔ داده — مدیر استان فقط سهمیه‌های استان خود؛ بقیه (مرکز/مشاور) بدون دادهٔ بودجه
+  if (!ctx.acc.seeAllData) {
+    const s = ctx.acc.scope;
+    if (s.kind === "province" && s.provinces.length) where.provinces = { some: { provinceId: { in: s.provinces } } };
+    else where.id = { in: [] }; // هیچ
+  }
 
   if (ctx.mode === "summary") {
     const parts: string[] = ["1=1"];
@@ -1208,7 +1316,15 @@ async function reportBudgets(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("b.`startDate` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("b.`startDate` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("b.`title` LIKE ?"); args.push(`%${ctx.q}%`); }
-    return summarizeSql(ctx, { from: "`Budget` b", where: `WHERE ${parts.join(" AND ")}`, args }, BUDGET_GROUPS, BUDGET_METRICS);
+    let scopeSql = "";
+    if (!ctx.acc.seeAllData) {
+      const s = ctx.acc.scope;
+      if (s.kind === "province" && s.provinces.length) {
+        scopeSql = " AND b.`id` IN (SELECT bp.`budgetId` FROM `BudgetProvince` bp WHERE bp.`provinceId` IN (" + s.provinces.map(() => "?").join(",") + "))";
+        args.push(...s.provinces);
+      } else scopeSql = " AND 1=0";
+    }
+    return summarizeSql(ctx, { from: "`Budget` b", where: `WHERE ${parts.join(" AND ")}` + scopeSql, args }, BUDGET_GROUPS, BUDGET_METRICS);
   }
 
   const mapB = (b: any) => ({
@@ -1259,6 +1375,13 @@ async function reportReserveRequests(ctx: Ctx) {
     if (ctx.toDate) where.creationDate.lte = ctx.toDate;
   }
   if (ctx.q) where.OR = [{ userName: { contains: ctx.q } }, { description: { contains: ctx.q } }];
+  // دامنهٔ داده — درخواست‌های رزرو استان/مرکز (نسخهٔ ۶.۱۰)
+  if (!ctx.acc.seeAllData) {
+    const s = ctx.acc.scope;
+    if (s.kind === "province" && s.provinces.length) where.provinceId = { in: s.provinces };
+    else if (s.kind === "center" && s.centers.length) where.centerId = { in: s.centers };
+    else where.adminReferrerId = ctx.acc.uid;
+  }
 
   const select = {
     id: true, creationDate: true, userName: true, description: true, status: true,
@@ -1293,6 +1416,13 @@ async function reportReserveRequests(ctx: Ctx) {
     if (ctx.fromDate) { parts.push("r.`creationDate` >= ?"); args.push(ctx.fromDate); }
     if (ctx.toDate) { parts.push("r.`creationDate` <= ?"); args.push(ctx.toDate); }
     if (ctx.q) { parts.push("(r.`userName` LIKE ? OR r.`description` LIKE ?)"); args.push(`%${ctx.q}%`, `%${ctx.q}%`); }
+    // دامنهٔ داده — درخواست‌های رزرو
+    if (!ctx.acc.seeAllData) {
+      const s = ctx.acc.scope;
+      if (s.kind === "province" && s.provinces.length) { parts.push("r.`provinceId` IN (" + s.provinces.map(() => "?").join(",") + ")"); args.push(...s.provinces); }
+      else if (s.kind === "center" && s.centers.length) { parts.push("r.`centerId` IN (" + s.centers.map(() => "?").join(",") + ")"); args.push(...s.centers); }
+      else { parts.push("r.`adminReferrerId` = ?"); args.push(ctx.acc.uid); }
+    }
     return summarizeSql(
       ctx,
       { from: "`ReferrsRequest` r", joins: " LEFT JOIN `Province` p ON r.`provinceId` = p.`id` LEFT JOIN `Centers` c ON r.`centerId` = c.`id`", where: `WHERE ${parts.join(" AND ")}`, args },
