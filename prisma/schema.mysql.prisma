@@ -1132,3 +1132,42 @@ model ChecklistRunItem {
   @@index([runId])
   @@map("ChecklistRunItems")
 }
+// ---------------------------------------------------------------------
+// وب‌سرویس‌ساز و به‌روزرسانی داده — نسخهٔ ۶.۲
+// ---------------------------------------------------------------------
+
+model WebService {
+  id         Int       @id @default(autoincrement())
+  slug       String    @unique // آدرس: /api/ws/<slug>
+  title      String
+  table      String // نام جدول مجاز از کاتالوگ
+  columns    String // JSON: ["id","name", ...] — خالی یعنی همهٔ ستون‌های مجاز
+  filters    String? // JSON: [{col,op,value}]
+  format     String    @default("json") // json | xml | csv
+  authType   String    @default("apikey") // none | apikey
+  apiKey     String?
+  rowLimit   Int       @default(1000)
+  orderBy    String?
+  isActive   Boolean   @default(true)
+  callCount  Int       @default(0)
+  lastCallAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@map("WebServices")
+}
+
+model ImportJob {
+  id         Int       @id @default(autoincrement())
+  source     String // مسیر فایل پشتیبان روی سرور
+  mode       String    @default("append") // append (ادغام با به‌روزرسانی) | truncate (پاک و جایگزین)
+  status     String    @default("queued") // queued | running | done | failed
+  progress   Int       @default(0)
+  tablesDone Int       @default(0)
+  tablesAll  Int       @default(0)
+  log        String?
+  byUserId   Int?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@map("ImportJobs")
+}

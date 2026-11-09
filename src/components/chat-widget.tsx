@@ -122,6 +122,13 @@ export function ChatWidget() {
     });
   };
 
+  // باز شدن از سایر صفحات (دکمهٔ «دستیار هوشمند» داشبورد)
+  React.useEffect(() => {
+    const openChat = () => setOpen(true);
+    window.addEventListener("rz-open-chat", openChat);
+    return () => window.removeEventListener("rz-open-chat", openChat);
+  }, []);
+
   // خوش‌آمد فقط یک بار — هشدار موارد حاد برای نشان روی دکمهٔ شناور
   React.useEffect(() => {
     if (!open || booted) return;

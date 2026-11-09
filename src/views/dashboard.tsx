@@ -1,16 +1,18 @@
 "use client";
-// داشبورد اصلی
+// داشبورد اصلی — نسخهٔ ۶.۲: شاخص‌های کلیدی با تفسیر + امتیاز سلامت داده
 import * as React from "react";
 import { PageHeader, StatCard, SectionCard, StatusBadge, NameAvatar, DateCell, LoadingView, DataTable } from "@/components/shared";
-import { AreaChartX, DonutChart, CHART_COLORS } from "@/components/charts";
+import { AreaChartX, DonutChart, GaugeChart, CHART_COLORS } from "@/components/charts";
 import { faNum, jLong, jTime } from "@/lib/jalali";
 import { api, useQuery, navigate } from "@/lib/client";
 import {
   CalendarCheck, Users, Building2, ArrowLeftRight, Siren, ClipboardCheck,
   Clock, UserRoundCheck, TrendingUp, CalendarClock, ChevronLeft, FileBarChart2,
+  ShieldCheck, Info, Sparkles,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type DashboardData = {
   kpis: {
@@ -19,6 +21,8 @@ type DashboardData = {
     totalUsers: number; totalCenters: number; totalConsultants: number;
     pendingReferrals: number; openEms: number;
   };
+  health: { score: number; computedAt: string; checks: { id: string; name: string; ok: boolean; count: number; hint: string; route: string; severity: string }[] };
+  kpiCards: { key: string; label: string; value: number; tone: string; title: string; text: string }[];
   budgets: { id: number; title: string; amount: number; used: number; remained: number; pct: number }[];
   serviceDist: { name: string; value: number }[];
   statusDist: { name: string; value: number }[];
@@ -41,6 +45,7 @@ type UpcomingReserve = {
 
 export function DashboardView() {
   const { data, loading, error } = useQuery<DashboardData>(() => api("/api/dashboard"), []);
+  const [kpiDialog, setKpiDialog] = React.useState<{ title: string; text: string } | null>(null);
 
   if (loading) return <LoadingView />;
   if (error || !data)
@@ -73,6 +78,55 @@ export function DashboardView() {
         <StatCard title="مراکز فعال" value={faNum(k.totalCenters)} icon={<Building2 className="h-5 w-5" />} tone="slate" hint="سراسر کشور" />
         <StatCard title="موارد حاد باز" value={faNum(k.openEms)} icon={<Siren className="h-5 w-5" />} tone="rose" hint="نیازمند بررسی" />
       </div>
+
+      {/* شاخص‌های کلیدی با تفسیر + سلامت داده (۶.۲) */}
+      {data.kpiCards?.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+          <SectionCard title="شاخص‌های کلیدی" subtitle="روی هر شاخص بزنید تا تفسیر خودکار نمایش داده شود">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+              {data.kpiCards.map((c) => (
+                <button
+                  key={c.key}
+                  onClick={() => setKpiDialog({ title: c.title, text: c.text })}
+                  className="group rounded-xl border bg-muted/30 p-3.5 text-right transition-all hover:-translate-y-0.5 hover:border-ring hover:shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-muted-foreground">{c.label}</span>
+                    <Info className="h-3.5 w-3.5 text-muted-foreground/50 transition-colors group-hover:text-primary" />
+                  </div>
+                  <p className="mt-1.5 text-xl font-extrabold tabular-nums">
+                    <span className={c.value === 0 ? "text-muted-foreground" : c.tone === "rose" ? "text-rose-600" : c.tone === "amber" ? "text-amber-600" : c.tone === "emerald" ? "text-emerald-600" : "text-foreground"}>
+                      {faNum(String(c.value))}٪
+                    </span>
+                  </p>
+                </button>
+              ))}
+            </div>
+          </SectionCard>
+
+          <SectionCard title="امتیاز سلامت داده" subtitle={`${faNum(data.health?.checks?.filter((c) => c.ok).length ?? 0)} از ${faNum(data.health?.checks?.length ?? 0)} بررسی سالم`}>
+            <div className="flex flex-col items-center">
+              <GaugeChart value={data.health?.score ?? 0} label={`${faNum(String(data.health?.score ?? 0))} از ۱۰۰`} color={(data.health?.score ?? 0) >= 80 ? "#0d9488" : (data.health?.score ?? 0) >= 50 ? "#d97706" : "#dc2626"} />
+              <div className="mt-3 w-full space-y-1.5">
+                {(data.health?.checks ?? []).filter((c) => !c.ok).slice(0, 4).map((c) => (
+                  <button key={c.id} onClick={() => navigate(c.route)} className="flex w-full items-center justify-between rounded-lg bg-rose-50 px-3 py-1.5 text-[10.5px] transition-colors hover:bg-rose-100 dark:bg-rose-950/40">
+                    <span className="font-semibold text-rose-700 dark:text-rose-300">{c.name}</span>
+                    <span className="font-bold tabular-nums text-rose-600">{faNum(c.count)}</span>
+                  </button>
+                ))}
+                {(data.health?.checks ?? []).every((c) => c.ok) && data.health?.checks?.length ? (
+                  <p className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-50 py-2 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    <ShieldCheck className="h-4 w-4" /> همهٔ بررسی‌های کیفیت داده سالم هستند
+                  </p>
+                ) : null}
+                <button onClick={() => navigate("bi")} className="flex w-full items-center justify-center gap-1 pt-1 text-[10.5px] font-bold text-primary">
+                  خطایابی کامل و پنل پیشنهادی <ChevronLeft className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </SectionCard>
+        </div>
+      )}
 
       {/* نمودار روند + توزیع خدمت */}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -189,10 +243,19 @@ export function DashboardView() {
               <QuickBtn icon={<Clock className="h-4 w-4" />} label="جلسات ناتمام" count={k.undoneEvents} onClick={() => navigate("events")} />
               <QuickBtn icon={<TrendingUp className="h-4 w-4" />} label="داشبوردهای مدیریتی" onClick={() => navigate("bi")} />
               <QuickBtn icon={<FileBarChart2 className="h-4 w-4" />} label="گزارش‌ساز" onClick={() => navigate("reports")} />
+              <QuickBtn icon={<Sparkles className="h-4 w-4" />} label="دستیار هوشمند" onClick={() => window.dispatchEvent(new CustomEvent("rz-open-chat"))} />
             </div>
           </SectionCard>
         </div>
       </div>
+
+      {/* دیالوگ تفسیر شاخص */}
+      <Dialog open={kpiDialog !== null} onOpenChange={(o) => !o && setKpiDialog(null)}>
+        <DialogContent className="max-w-md p-6" dir="rtl">
+          <DialogHeader><DialogTitle className="flex items-center gap-2 text-right"><Info className="h-5 w-5 text-primary" /> {kpiDialog?.title}</DialogTitle></DialogHeader>
+          <p className="text-[13px] leading-7 text-muted-foreground">{kpiDialog?.text}</p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

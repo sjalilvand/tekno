@@ -11,7 +11,7 @@ import {
   Inbox, Siren, Users, Building2, ShieldCheck, FileSignature, Target, Wallet, Receipt,
   MessageSquareText, Mail, CalendarHeart, ScrollText, LifeBuoy, Settings, BookOpen,
   ChevronsLeft, ChevronDown, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search, PlugZap,
-  FileBarChart2, PanelRightClose, PanelRightOpen, X, Network, FolderOpen, ClipboardPlus, ListChecks,
+  FileBarChart2, PanelRightClose, PanelRightOpen, X, Network, FolderOpen, ClipboardPlus, ListChecks, DatabaseBackup,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -71,6 +71,8 @@ const NAV: NavGroup[] = [
   ]},
   { label: "سیستم", items: [
     { key: "integrations", label: "یکپارچه‌سازی‌ها", icon: PlugZap },
+    { key: "webservices", label: "وب‌سرویس‌ساز", icon: PlugZap },
+    { key: "backup", label: "داده و پشتیبان", icon: DatabaseBackup },
     { key: "logs", label: "لاگ فعالیت", icon: ScrollText },
     { key: "tickets", label: "تیکت پشتیبانی", icon: LifeBuoy },
     { key: "settings", label: "تنظیمات سامانه", icon: Settings },

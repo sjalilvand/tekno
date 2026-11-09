@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, ok, fail } from "@/lib/server";
-import { cacheGet, cacheSet } from "@/lib/analytics";
+import { cacheGet, cacheSet, rawScalar } from "@/lib/analytics";
+import { computeQuality, interpretKpi } from "@/lib/quality";
 
 /**
  * داشبورد اصلی — مقاوم در برابر داده‌های ناقص:
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
   const user = await getCurrentUser(req);
   if (!user) return fail("UNAUTHORIZED", 401);
 
-  const cached = cacheGet<Record<string, unknown>>("dashboard:v3");
+  const cached = cacheGet<Record<string, unknown>>("dashboard:v4");
   if (cached) return ok(cached);
 
   const now = new Date();
@@ -94,6 +95,26 @@ export async function GET(req: NextRequest) {
 
   const trend = eventsPrevMonth > 0 ? Math.round(((eventsThisMonth - eventsPrevMonth) / eventsPrevMonth) * 100) : 0;
 
+  // ---------- شاخص‌های کلیدی با تفسیر + امتیاز سلامت داده (نسخهٔ ۶.۲) ----------
+  const health = await computeQuality();
+  const [reserves, emsTotal, repeatClients, onceClients, avgTariffNow, avgTariffPrev] = await Promise.all([
+    settled(() => db.eventReserve.count(), 0),
+    settled(() => db.event.count({ where: { isEms: true } }), 0),
+    settled(async () => rawScalar(`SELECT COUNT(*) c FROM (SELECT \`userId\` FROM \`Events\` WHERE \`status\` = 'تایید نهایی' GROUP BY \`userId\` HAVING COUNT(*) > 1) t`), 0),
+    settled(async () => rawScalar(`SELECT COUNT(*) c FROM (SELECT \`userId\` FROM \`Events\` WHERE \`status\` = 'تایید نهایی' GROUP BY \`userId\` HAVING COUNT(*) = 1) t`), 0),
+    settled(async () => rawScalar(`SELECT AVG(\`userTariff\`) c FROM \`Events\` WHERE \`startDate\` >= ?`, [monthAgo]), 0),
+    settled(async () => rawScalar(`SELECT AVG(\`userTariff\`) c FROM \`Events\` WHERE \`startDate\` >= ? AND \`startDate\` < ?`, [prevMonthStart, monthAgo]), 0),
+  ]);
+  const totalConfirmed = confirmedEvents || 1;
+  const kpiCards = [
+    { key: "dataHealth", label: "سلامت داده", value: health.score, tone: health.score >= 80 ? "emerald" : health.score >= 50 ? "amber" : "rose", ...interpretKpi("dataHealth", health.score) },
+    { key: "conversion", label: "نرخ تبدیل رزرو", value: reserves ? Math.round((totalConfirmed * 100) / Math.max(reserves, 1)) : 0, tone: "cyan", ...interpretKpi("conversion", reserves ? Math.round((totalConfirmed * 100) / Math.max(reserves, 1)) : 0) },
+    { key: "returnRate", label: "نرخ بازگشت مراجع", value: (repeatClients + onceClients) ? Math.round((repeatClients * 100) / (repeatClients + onceClients)) : 0, tone: "violet", ...interpretKpi("returnRate", (repeatClients + onceClients) ? Math.round((repeatClients * 100) / (repeatClients + onceClients)) : 0) },
+    { key: "avgPaymentGrowth", label: "رشد میانگین پرداخت", value: avgTariffPrev ? Math.round(((avgTariffNow - avgTariffPrev) / avgTariffPrev) * 100) : 0, tone: "amber", ...interpretKpi("avgPaymentGrowth", avgTariffPrev ? Math.round(((avgTariffNow - avgTariffPrev) / avgTariffPrev) * 100) : 0) },
+    { key: "pendingShare", label: "سهم جلسات در انتظار", value: totalEvents ? Math.round((pendingEvents * 100) / totalEvents) : 0, tone: "amber", ...interpretKpi("pendingShare", totalEvents ? Math.round((pendingEvents * 100) / totalEvents) : 0) },
+    { key: "emsShare", label: "سهم موارد حاد", value: totalEvents ? Math.round((emsTotal * 100) / totalEvents) : 0, tone: "rose", ...interpretKpi("emsShare", totalEvents ? Math.round((emsTotal * 100) / totalEvents) : 0) },
+  ];
+
   const payload = {
     kpis: {
       totalEvents: { value: totalEvents, trend },
@@ -113,8 +134,10 @@ export async function GET(req: NextRequest) {
     monthlySeries: series,
     recentEvents,
     upcomingReserves,
+    health: { score: health.score, computedAt: health.computedAt, checks: health.checks },
+    kpiCards,
   };
-  cacheSet("dashboard:v3", payload);
+  cacheSet("dashboard:v4", payload);
   return ok(payload);
 }
 
