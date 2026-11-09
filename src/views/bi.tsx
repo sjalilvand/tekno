@@ -37,6 +37,8 @@ type BiPayload = {
   generatedAt: string;
   cached?: boolean;
   filters: { provinceId: number | null; from: string | null; to: string | null };
+  scoped?: boolean;
+  scopeName?: string | null;
   kpis: BiKpi[];
   charts: BiChart[];
   budgetTable: { headers: string[]; rows: string[][] };
@@ -66,6 +68,8 @@ type InsightsData = {
   anomalies: { id: string; kind: string; severity: number; date: string; title: string; detail: string }[];
   quality: { score: number; checks: { id: string; name: string; ok: boolean; count: number; hint: string; route: string }[] };
   recommendations: { id: string; icon: string; tone: string; title: string; text: string; route?: string }[];
+  scoped?: boolean;
+  scopeName?: string | null;
 };
 
 const IMPORT_COMMAND = '.\\deploy.ps1 -Mode import -DbEngine mysql -MysqlUser root -MysqlDatabase rahe_zendegi -DataDir "D:\\Projects\\rahe_zendegi\\data"';
@@ -172,8 +176,10 @@ export function BiView() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="داشبوردهای مدیریتی"
-        subtitle={`توصیفی، تحلیلی، تفسیری، کشف خطا و پیشنهادی — آخرین محاسبه: ${bi.data ? jDateTime(bi.data.generatedAt) : "…"}`}
+        title={bi.data?.scoped ? "داشبورد شخصی" : "داشبوردهای مدیریتی"}
+        subtitle={bi.data?.scoped
+          ? `فقط دادهٔ جلسات شما نمایش داده می‌شود — آخرین محاسبه: ${bi.data ? jDateTime(bi.data.generatedAt) : "…"}`
+          : `توصیفی، تحلیلی، تفسیری، کشف خطا و پیشنهادی — آخرین محاسبه: ${bi.data ? jDateTime(bi.data.generatedAt) : "…"}`}
         icon={<BarChart3 className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2 no-print">
@@ -187,6 +193,14 @@ export function BiView() {
           </div>
         }
       />
+
+      {/* هشدار اسکوپ شخصی — مشاور فقط دادهٔ خودش را می‌بیند (نسخهٔ ۶.۹) */}
+      {bi.data?.scoped && (
+        <div className="flex items-center gap-2 rounded-2xl border border-sky-300 bg-sky-50 px-4 py-2.5 text-xs font-bold text-sky-800 no-print dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300">
+          <ShieldCheck className="h-4 w-4 shrink-0" />
+          این داشبورد فقط آمار جلسات و مراجعان شما را نمایش می‌دهد — دادهٔ سایر مشاوران پنهان است.
+        </div>
+      )}
 
       {/* پوشش داده‌ها / هشدار خالی بودن */}
       {coverage.data && (

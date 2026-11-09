@@ -47,16 +47,23 @@ export type BiPayload = {
   generatedAt: string;
   cached?: boolean;
   filters: { provinceId: number | null; from: string | null; to: string | null };
+  scoped?: boolean;
+  scopeName?: string | null;
   kpis: BiKpi[];
   charts: Chart[];
   budgetTable: { headers: string[]; rows: string[][] };
 };
 
-export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: string | null, toRaw: string | null): Promise<BiPayload> {
+/**
+ * counselorId — اگر مقدار داشته باشد، داشبورد فقط جلساتِ همان مشاور
+ * (به‌عنوان پذیرنده یا ناظر) را حساب می‌کند؛ مدیر سامانه با null همهٔ داده را می‌بیند.
+ */
+export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: string | null, toRaw: string | null, counselorId?: number | null): Promise<BiPayload> {
   const provinceId = provinceIdRaw ? Number(provinceIdRaw) : null;
   const w = parseWindow(fromRaw, toRaw);
+  const scoped = Boolean(counselorId);
 
-  const ck = `bi:${windowKey(w, { provinceId })}`;
+  const ck = `bi:${windowKey(w, { provinceId, c: scoped ? counselorId : "all" })}`;
   const hit = cacheGet<Record<string, unknown>>(ck);
   if (hit) return { ...(hit as unknown as BiPayload), cached: true };
 
@@ -64,6 +71,11 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
     // ---------- شرط‌های مشترک جلسات ----------
     const evArgs: unknown[] = [];
     let evWhere = "";
+    if (scoped) {
+      // اسکوپ مشاور — فقط جلسات خودش (پذیرش‌شده یا ناظرِ آن‌ها)
+      evWhere += " AND (e.`acceptorId` = ? OR e.`supervisorId` = ?)";
+      evArgs.push(counselorId, counselorId);
+    }
     if (provinceId) {
       evWhere += " AND e.`centerId` IN (SELECT `id` FROM `Centers` WHERE `provinceId` = ?)";
       evArgs.push(provinceId);
@@ -99,21 +111,25 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
     const stageOk = STAGES.map(([col]) => num(k[`s_${col.replace(/[^a-z]/gi, "")}`]));
 
     const [reserves, usersTotal, smsTotal, referrTotal] = await Promise.all([
-      rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\``),
-      rawScalar(`SELECT COUNT(*) AS c FROM \`Users\``),
-      rawScalar(`SELECT COUNT(*) AS c FROM \`SMS\``),
-      rawScalar(`SELECT COUNT(*) AS c FROM \`Referrs\``),
+      scoped
+        ? rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?)`, [counselorId, counselorId])
+        : rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\``),
+      scoped
+        ? rawScalar(`SELECT COUNT(DISTINCT \`userId\`) AS c FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?`, [counselorId, counselorId])
+        : rawScalar(`SELECT COUNT(*) AS c FROM \`Users\``),
+      scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM \`SMS\``),
+      scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM \`Referrs\``),
     ]);
 
     const kpis: BiKpi[] = [
-      { key: "events", label: "کل جلسات مشاوره", value: faNum(totalEvents), sub: "همهٔ جلسات ثبت‌شده", icon: "CalendarCheck", tone: "p" },
+      { key: "events", label: scoped ? "کل جلسات من" : "کل جلسات مشاوره", value: faNum(totalEvents), sub: scoped ? "جلسات ثبت‌شدهٔ شما" : "همهٔ جلسات ثبت‌شده", icon: "CalendarCheck", tone: "p" },
       { key: "done", label: "انجام‌شده", value: faNum(doneEvents), sub: "جلسات پایان‌یافته", icon: "CheckCircle2", tone: "g" },
       { key: "undone", label: "ناتمام", value: faNum(totalEvents - doneEvents), sub: "در جریان یا ردشده", icon: "Clock", tone: "o" },
       { key: "ems", label: "موارد حاد", value: faNum(emsEvents), sub: "کیس‌های آسیب به خود", icon: "Siren", tone: "r" },
-      { key: "clients", label: "مراجعان یکتا", value: faNum(uniqueClients), sub: "مراجعان متمایز", icon: "Users", tone: "b" },
+      { key: "clients", label: scoped ? "مراجعان یکتای من" : "مراجعان یکتا", value: faNum(uniqueClients), sub: "مراجعان متمایز", icon: "Users", tone: "b" },
       { key: "consultants", label: "مشاوران فعال", value: faNum(activeConsultants), sub: "مشاوران دارای جلسه", icon: "UserRoundCheck", tone: "b" },
-      { key: "fee", label: "حق‌الزحمه مشاوران (ریال)", value: faNum(feeSum), sub: "بر اساس مبالغ ثبت‌شدهٔ جلسات", icon: "Wallet", tone: "g" },
-      { key: "reserves", label: "رزروهای ثبت‌شده", value: faNum(reserves), sub: `${faNum(usersTotal)} کاربر • ${faNum(smsTotal)} پیامک • ${faNum(referrTotal)} ارجاع`, icon: "CalendarClock", tone: "p" },
+      { key: "fee", label: scoped ? "حق‌الزحمه من (ریال)" : "حق‌الزحمه مشاوران (ریال)", value: faNum(feeSum), sub: "بر اساس مبالغ ثبت‌شدهٔ جلسات", icon: "Wallet", tone: "g" },
+      { key: "reserves", label: "رزروهای ثبت‌شده", value: faNum(reserves), sub: scoped ? "رزروهای جلسات شما" : `${faNum(usersTotal)} کاربر • ${faNum(smsTotal)} پیامک • ${faNum(referrTotal)} ارجاع`, icon: "CalendarClock", tone: "p" },
     ];
 
     // ---------- نمودارها — همهٔ کوئری‌ها موازی ----------
@@ -128,12 +144,18 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
         rawRows(`SELECT m.\`name\` AS k, COUNT(*) AS c FROM \`Events\` e LEFT JOIN \`Users\` u ON e.\`userId\` = u.\`id\` LEFT JOIN \`Marriage\` m ON u.\`marriageId\` = m.\`id\` WHERE 1=1${W} GROUP BY m.\`name\``, A),
         rawRows(`SELECT ed.\`name\` AS k, COUNT(*) AS c FROM \`Events\` e LEFT JOIN \`Users\` u ON e.\`userId\` = u.\`id\` LEFT JOIN \`Education\` ed ON u.\`educationId\` = ed.\`id\` WHERE 1=1${W} GROUP BY ed.\`name\``, A),
         rawRows(`SELECT u.\`name\` AS n, u.\`family\` AS f, COUNT(*) AS c FROM \`Events\` e LEFT JOIN \`Users\` u ON e.\`acceptorId\` = u.\`id\` WHERE e.\`acceptorId\` > 0${W} GROUP BY u.\`id\`, u.\`name\`, u.\`family\``, A),
-        rawRows(`SELECT ee.\`severity\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee LEFT JOIN \`Events\` e ON ee.\`eventId\` = e.\`id\` WHERE 1=1 GROUP BY ee.\`severity\``),
-        rawRows(`SELECT ee.\`hadPaymentStatus\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee LEFT JOIN \`Events\` e ON ee.\`eventId\` = e.\`id\` WHERE 1=1 GROUP BY ee.\`hadPaymentStatus\``),
-        rawRows(`SELECT ${sqlLocalDate("u.\`signupDate\`")} AS d, COUNT(*) AS c FROM \`Users\` u WHERE u.\`signupDate\` IS NOT NULL GROUP BY ${sqlLocalDate("u.\`signupDate\`")} ORDER BY 1`),
-        rawRows(`SELECT r.\`status\` AS k, COUNT(*) AS c FROM \`Referrs\` r WHERE 1=1${provinceId ? " AND r.\`provinceId\` = ?" : ""} GROUP BY r.\`status\``, provinceId ? [provinceId] : []),
-        rawRows(`SELECT s.\`status\` AS k, COUNT(*) AS c FROM \`SMS\` s GROUP BY s.\`status\``),
-        rawRows(`SELECT ${sqlLocalDate("g.\`startDate\`")} AS d, COUNT(*) AS c FROM \`GroupEvents\` g WHERE g.\`startDate\` IS NOT NULL GROUP BY ${sqlLocalDate("g.\`startDate\`")} ORDER BY 1`),
+        scoped
+          ? rawRows(`SELECT ee.\`severity\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE ee.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?) GROUP BY ee.\`severity\``, [counselorId, counselorId])
+          : rawRows(`SELECT ee.\`severity\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE 1=1 GROUP BY ee.\`severity\``),
+        scoped
+          ? rawRows(`SELECT ee.\`hadPaymentStatus\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE ee.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?) GROUP BY ee.\`hadPaymentStatus\``, [counselorId, counselorId])
+          : rawRows(`SELECT ee.\`hadPaymentStatus\` AS k, COUNT(*) AS c FROM \`EventsEms\` ee WHERE 1=1 GROUP BY ee.\`hadPaymentStatus\``),
+        scoped ? Promise.resolve([]) : rawRows(`SELECT ${sqlLocalDate("u.\`signupDate\`")} AS d, COUNT(*) AS c FROM \`Users\` u WHERE u.\`signupDate\` IS NOT NULL GROUP BY ${sqlLocalDate("u.\`signupDate\`")} ORDER BY 1`),
+        scoped ? Promise.resolve([]) : rawRows(`SELECT r.\`status\` AS k, COUNT(*) AS c FROM \`Referrs\` r WHERE 1=1${provinceId ? " AND r.\`provinceId\` = ?" : ""} GROUP BY r.\`status\``, provinceId ? [provinceId] : []),
+        scoped ? Promise.resolve([]) : rawRows(`SELECT s.\`status\` AS k, COUNT(*) AS c FROM \`SMS\` s GROUP BY s.\`status\``),
+        scoped
+          ? rawRows(`SELECT ${sqlLocalDate("g.\`startDate\`")} AS d, COUNT(*) AS c FROM \`GroupEvents\` g WHERE g.\`startDate\` IS NOT NULL AND g.\`acceptorId\` = ? GROUP BY ${sqlLocalDate("g.\`startDate\`")} ORDER BY 1`, [counselorId])
+          : rawRows(`SELECT ${sqlLocalDate("g.\`startDate\`")} AS d, COUNT(*) AS c FROM \`GroupEvents\` g WHERE g.\`startDate\` IS NOT NULL GROUP BY ${sqlLocalDate("g.\`startDate\`")} ORDER BY 1`),
       ]);
 
     // ---------- ساخت نمودارها ----------
@@ -177,9 +199,11 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
     const c8 = donut("ev_edu", "مراجعان به تفکیک تحصیلات", eduRows.map((r: Record<string, unknown>) => [String(r.k ?? "نامشخص"), num(r.c)]));
     if (c8) charts.push(c8);
 
-    // ۹) مشاوران پرکار
-    const c9 = bars("ev_advisers", "مشاوران پرکار", adviserRows.map((r: Record<string, unknown>) => [`${String(r.n ?? "")} ${String(r.f ?? "")}`.trim() || "نامشخص", num(r.c)]), 12, "جلسات");
-    if (c9) charts.push(c9);
+    // ۹) مشاوران پرکار — فقط برای نمای مدیریتی (در اسکوپ مشاور معنی ندارد)
+    if (!scoped) {
+      const c9 = bars("ev_advisers", "مشاوران پرکار", adviserRows.map((r: Record<string, unknown>) => [`${String(r.n ?? "")} ${String(r.f ?? "")}`.trim() || "نامشخص", num(r.c)]), 12, "جلسات");
+      if (c9) charts.push(c9);
+    }
 
     // ۱۰) موارد حاد — شدت خطر و وضعیت بررسی
     const c10 = donut("ems_severity", "موارد حاد به تفکیک شدت خطر", emsSevRows.map((r: Record<string, unknown>) => [EMS_RISK_MAP[String(r.k ?? "")] ?? String(r.k ?? "نامشخص"), num(r.c)]));
@@ -187,18 +211,24 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
     const c10b = donut("ems_paystatus", "موارد حاد به تفکیک وضعیت بررسی", emsStatusRows.map((r: Record<string, unknown>) => [EMS_STATUS_MAP[String(r.k ?? "")] ?? String(r.k ?? "نامشخص"), num(r.c)]));
     if (c10b) charts.push(c10b);
 
-    // ۱۱) رشد ثبت‌نام کاربران
-    const signupMonths = jalaliMonthly(signupDaily.map((r: Record<string, unknown>) => ({ d: String(r.d ?? "").slice(0, 10), c: num(r.c) })));
-    const c11 = lineChart("users_trend", "رشد ثبت‌نام کاربران", signupMonths, false);
-    if (c11) charts.push(c11);
+    // ۱۱) رشد ثبت‌نام کاربران — فقط نمای مدیریتی
+    if (!scoped) {
+      const signupMonths = jalaliMonthly(signupDaily.map((r: Record<string, unknown>) => ({ d: String(r.d ?? "").slice(0, 10), c: num(r.c) })));
+      const c11 = lineChart("users_trend", "رشد ثبت‌نام کاربران", signupMonths, false);
+      if (c11) charts.push(c11);
+    }
 
-    // ۱۲) ارجاع‌های سها
-    const c12 = donut("ref_status", "ارجاع‌های سها به تفکیک وضعیت", referrRows.map((r: Record<string, unknown>) => [REFERR_STATUS_MAP[String(r.k ?? "")] ?? String(r.k ?? "نامشخص"), num(r.c)]));
-    if (c12) charts.push(c12);
+    // ۱۲) ارجاع‌های سها — فقط نمای مدیریتی
+    if (!scoped) {
+      const c12 = donut("ref_status", "ارجاع‌های سها به تفکیک وضعیت", referrRows.map((r: Record<string, unknown>) => [REFERR_STATUS_MAP[String(r.k ?? "")] ?? String(r.k ?? "نامشخص"), num(r.c)]));
+      if (c12) charts.push(c12);
+    }
 
-    // ۱۳) پیامک‌ها
-    const c13 = donut("sms_status", "پیامک‌ها به تفکیک وضعیت", smsRows.map((r: Record<string, unknown>) => [SMS_STATUS_MAP[String(r.k ?? "")] ?? String(r.k ?? "نامشخص"), num(r.c)]));
-    if (c13) charts.push(c13);
+    // ۱۳) پیامک‌ها — فقط نمای مدیریتی
+    if (!scoped) {
+      const c13 = donut("sms_status", "پیامک‌ها به تفکیک وضعیت", smsRows.map((r: Record<string, unknown>) => [SMS_STATUS_MAP[String(r.k ?? "")] ?? String(r.k ?? "نامشخص"), num(r.c)]));
+      if (c13) charts.push(c13);
+    }
 
     // ۱۴) جلسات گروهی ماهانه
     const groupMonths = jalaliMonthly(groupDaily.map((r: Record<string, unknown>) => ({ d: String(r.d ?? "").slice(0, 10), c: num(r.c) })));
@@ -207,8 +237,8 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
 
     addInsights(charts, w.fromIso || w.toIso ? "(در بازهٔ فیلتر انتخابی)" : undefined);
 
-    // ---------- جدول سهمیه‌ها (بودجه) ----------
-    const budgetRows = await rawRows(`SELECT \`title\`, \`kind\`, \`amount\`, \`used\`, \`reserved\`, \`remained\`, \`startDate\`, \`endDate\` FROM \`Budget\` ORDER BY \`id\``);
+    // ---------- جدول سهمیه‌ها (بودجه) — فقط نمای مدیریتی ----------
+    const budgetRows = scoped ? [] : await rawRows(`SELECT \`title\`, \`kind\`, \`amount\`, \`used\`, \`reserved\`, \`remained\`, \`startDate\`, \`endDate\` FROM \`Budget\` ORDER BY \`id\``);
     const budgetTable = {
       headers: ["عنوان", "نوع", "سقف", "استفاده‌شده", "رزرو", "مانده", "درصد مصرف", "شروع", "پایان"],
       rows: budgetRows.map((r: Record<string, unknown>) => {
@@ -231,6 +261,8 @@ export async function buildBiPayload(provinceIdRaw: string | null, fromRaw: stri
     const payload: BiPayload = {
       generatedAt: new Date().toISOString(),
       filters: { provinceId, from: w.fromIso, to: w.toIso },
+      scoped,
+      scopeName: scoped ? "فقط دادهٔ جلسات شما" : null,
       kpis, charts, budgetTable,
     };
     cacheSet(ck, payload);

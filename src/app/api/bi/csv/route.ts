@@ -3,7 +3,7 @@
 // از همان کش داشبورد تغذیه می‌شود؛ محاسبهٔ تازه‌ای انجام نمی‌دهد
 // =====================================================================
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUser, fail } from "@/lib/server";
+import { fail, resolveAccess } from "@/lib/server";
 import { buildBiPayload } from "@/lib/bi-build";
 import { csvFromChart } from "@/lib/analytics";
 
@@ -12,12 +12,12 @@ export const dynamic = "force-dynamic";
 type Payload = { budgetTable: { headers: string[]; rows: unknown[][] }; charts: { id: string; kind: string }[] };
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
   const sp = req.nextUrl.searchParams;
   const chartId = sp.get("chart") ?? "";
   try {
-    const payload = (await buildBiPayload(sp.get("provinceId"), sp.get("from"), sp.get("to"))) as unknown as Payload;
+    const payload = (await buildBiPayload(sp.get("provinceId"), sp.get("from"), sp.get("to"), acc.seeAllData ? null : acc.uid)) as unknown as Payload;
     if (chartId === "budgets") {
       const t = payload.budgetTable;
       const esc = (v: unknown) => {

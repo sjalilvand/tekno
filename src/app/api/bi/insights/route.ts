@@ -7,9 +7,12 @@
 //   • روز هفته/ساعت از توابع تاریخ همان دیتابیس
 //   • کیفیت داده با شمارش‌های مستقیم SQL
 // خروجی دقیقاً همان شکل قبلی است تا نمای bi بدون تغییر کار کند.
+// ---------------------------------------------------------------
+// نسخهٔ ۶.۹ — اسکوپ داده: مشاور فقط جلسات خودش را می‌بیند
+// (به‌عنوان پذیرنده یا ناظر)؛ مدیر و کاربران با دسترسی کل همهٔ داده را می‌بینند.
 // =====================================================================
 import { NextRequest } from "next/server";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, resolveAccess } from "@/lib/server";
 import {
   cacheGet, cacheSet, rawRows, rawScalar, sqlLocalDate, sqlLocalHour, parseWindow, jalaliMonthly,
   windowKey, dbProvider, num,
@@ -35,14 +38,17 @@ function sqlDaysAgo(nDays: number): string {
 }
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
+  // اسکوپ مشاور — فقط جلسات خودش (پذیرش‌شده یا ناظر)
+  const counselorId = acc.seeAllData ? null : acc.uid;
+  const scoped = Boolean(counselorId);
   const sp = req.nextUrl.searchParams;
   const centerIdRaw = sp.get("centerId");
   const centerId = centerIdRaw ? Number(centerIdRaw) : null;
   const w = parseWindow(sp.get("from"), sp.get("to"));
 
-  const ck = `insights:${windowKey(w, { centerId })}`;
+  const ck = `insights:${windowKey(w, { centerId, c: scoped ? counselorId : "all" })}`;
   const hit = cacheGet<Record<string, unknown>>(ck);
   if (hit) return ok({ ...hit, cached: true });
 
@@ -50,8 +56,13 @@ export async function GET(req: NextRequest) {
     const dailyDate = sqlLocalDate("e.`startDate`");
     const hourlyDate = sqlLocalHour("e.`startDate`");
 
-    const evArgs: unknown[] = [];
+    // شرط اسکوپ مشاور برای همهٔ کوئری‌های جلسه‌محور
+    const SCOPE = scoped ? " AND (e.`acceptorId` = ? OR e.`supervisorId` = ?)" : "";
+    const SA = scoped ? [counselorId, counselorId] : [];
+
+    const evArgs: unknown[] = [...SA];
     let evWhere = " WHERE 1=1";
+    if (scoped) { evWhere += " AND (e.`acceptorId` = ? OR e.`supervisorId` = ?)"; }
     if (centerId) { evWhere += " AND e.`centerId` = ?"; evArgs.push(centerId); }
     if (w.fromIso) { evWhere += ` AND ${dailyDate} >= ?`; evArgs.push(w.fromIso); }
     if (w.toIso) { evWhere += ` AND ${dailyDate} <= ?`; evArgs.push(w.toIso); }
@@ -72,11 +83,17 @@ export async function GET(req: NextRequest) {
           FROM \`Events\` e${W}`,
           A,
         ),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`status\` LIKE 'در انتظار%'`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`status\` = 'رد شده'`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Users\``),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Centers\``),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r${centerId ? " WHERE r.`eventId` IN (SELECT `id` FROM `Events` WHERE `centerId` = ?)" : ""}`, centerId ? [centerId] : []),
+        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`status\` LIKE 'در انتظار%'${SCOPE}`, SA),
+        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`status\` = 'رد شده'${SCOPE}`, SA),
+        scoped
+          ? rawScalar(`SELECT COUNT(DISTINCT \`userId\`) AS c FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?`, SA)
+          : rawScalar(`SELECT COUNT(*) AS c FROM \`Users\``),
+        scoped
+          ? rawScalar(`SELECT COUNT(DISTINCT \`centerId\`) AS c FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?`, SA)
+          : rawScalar(`SELECT COUNT(*) AS c FROM \`Centers\``),
+        scoped
+          ? rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`acceptorId\` = ? OR \`supervisorId\` = ?${centerId ? " AND \`centerId\` = ?" : ""})`, [...SA, ...(centerId ? [centerId] : [])])
+          : rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r${centerId ? " WHERE r.\`eventId\` IN (SELECT \`id\` FROM \`Events\` WHERE \`centerId\` = ?)" : ""}`, centerId ? [centerId] : []),
       ]);
     const base = baseRows[0] ?? {};
     const eventsWin = n(base.eventsWin);
@@ -121,30 +138,36 @@ export async function GET(req: NextRequest) {
       rawRows(`SELECT e.\`status\` AS s, COUNT(*) AS c FROM \`Events\` e${W} GROUP BY e.\`status\``, A),
     ]);
 
-    // مراجعان تکرارشونده — داخل دیتابیس
-    const repeatArgs = centerId ? [centerId] : [];
-    const repeatClause = centerId ? " AND e.`centerId` = ?" : "";
+    // مراجعان تکرارشونده — داخل دیتابیس (اسکوپ‌شده)
+    const repeatConds = ["e.\`status\` = 'تایید نهایی'"];
+    const repeatArgs: unknown[] = [...SA];
+    if (scoped) { repeatConds.push("(e.\`acceptorId\` = ? OR e.\`supervisorId\` = ?)"); }
+    if (centerId) { repeatConds.push("e.\`centerId\` = ?"); repeatArgs.push(centerId); }
+    const RC = repeatConds.join(" AND ");
     const [repeatClients, onceClients] = await Promise.all([
-      rawScalar(`SELECT COUNT(*) AS c FROM (SELECT e.\`userId\` FROM \`Events\` e WHERE e.\`status\` = 'تایید نهایی'${repeatClause} GROUP BY e.\`userId\` HAVING COUNT(*) > 1) t`, repeatArgs),
-      rawScalar(`SELECT COUNT(*) AS c FROM (SELECT e.\`userId\` FROM \`Events\` e WHERE e.\`status\` = 'تایید نهایی'${repeatClause} GROUP BY e.\`userId\` HAVING COUNT(*) = 1) t`, repeatArgs),
+      rawScalar(`SELECT COUNT(*) AS c FROM (SELECT e.\`userId\` FROM \`Events\` e WHERE ${RC} GROUP BY e.\`userId\` HAVING COUNT(*) > 1) t`, repeatArgs),
+      rawScalar(`SELECT COUNT(*) AS c FROM (SELECT e.\`userId\` FROM \`Events\` e WHERE ${RC} GROUP BY e.\`userId\` HAVING COUNT(*) = 1) t`, repeatArgs),
     ]);
 
     // ---------------- کیفیت داده ----------------
+    // در اسکوپ مشاور: چک‌های جلسه‌محور اسکوپ می‌شوند؛ چک‌های سیستمی (کد ملی تکراری، پیامک، لجستیک) خنثی می‌شوند
+    const EV_COND = scoped ? "(e.\`acceptorId\` = ? OR e.\`supervisorId\` = ?) AND " : "";
+    const EV_ARGS = SA;
     const [noStart, zeroTariff, dupTrackingRaw, dupNidRaw, futureStart, stalePending, failedSms, orphanReserves, noMobile] =
       await Promise.all([
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`startDate\` IS NULL`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`status\` = 'تایید نهایی' AND e.\`userTariff\` = 0`),
-        rawScalar(`SELECT COUNT(*) AS c FROM (SELECT \`trackingCode\` FROM \`Events\` WHERE \`trackingCode\` IS NOT NULL GROUP BY \`trackingCode\` HAVING COUNT(*) > 1) t`),
-        rawScalar(`SELECT COUNT(*) AS c FROM (SELECT \`nid\` FROM \`Users\` GROUP BY \`nid\` HAVING COUNT(*) > 1) t`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`startDate\` IS NOT NULL AND ${dailyDate} > ${dbProvider() === "mysql" ? "CURDATE()" : "DATE('now', '+210 minutes')"}`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE e.\`endDate\` IS NULL AND e.\`startDate\` IS NOT NULL AND ${dailyDate} < ${sqlDaysAgo(14)}`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`SMS\` WHERE \`status\` = 'ناموفق' AND \`createTime\` IS NOT NULL AND ${sqlLocalDate("`createTime`")} >= ${sqlDaysAgo(90)}`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` NOT IN (SELECT \`id\` FROM \`Events\`)`),
-        rawScalar(`SELECT COUNT(*) AS c FROM \`Users\` WHERE \`mobile\` IS NULL OR \`mobile\` = 0`),
+        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE ${EV_COND}e.\`startDate\` IS NULL`, EV_ARGS),
+        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE ${EV_COND}e.\`status\` = 'تایید نهایی' AND e.\`userTariff\` = 0`, EV_ARGS),
+        scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM (SELECT \`trackingCode\` FROM \`Events\` WHERE \`trackingCode\` IS NOT NULL GROUP BY \`trackingCode\` HAVING COUNT(*) > 1) t`),
+        scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM (SELECT \`nid\` FROM \`Users\` GROUP BY \`nid\` HAVING COUNT(*) > 1) t`),
+        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE ${EV_COND}e.\`startDate\` IS NOT NULL AND ${dailyDate} > ${dbProvider() === "mysql" ? "CURDATE()" : "DATE('now', '+210 minutes')"}`, EV_ARGS),
+        rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` e WHERE ${EV_COND}e.\`endDate\` IS NULL AND e.\`startDate\` IS NOT NULL AND ${dailyDate} < ${sqlDaysAgo(14)}`, EV_ARGS),
+        scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM \`SMS\` WHERE \`status\` = 'ناموفق' AND \`createTime\` IS NOT NULL AND ${sqlLocalDate("\`createTime\`")} >= ${sqlDaysAgo(90)}`),
+        scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM \`EventReserves\` r WHERE r.\`eventId\` NOT IN (SELECT \`id\` FROM \`Events\`)`),
+        scoped ? Promise.resolve(0) : rawScalar(`SELECT COUNT(*) AS c FROM \`Users\` WHERE \`mobile\` IS NULL OR \`mobile\` = 0`),
       ]);
     // ردیف‌های واقعی کدهای تکراری (برای نمایش تعداد ردیف درگیر)
-    const dupTracking = dupTrackingRaw ? await rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` WHERE \`trackingCode\` IN (SELECT \`trackingCode\` FROM \`Events\` WHERE \`trackingCode\` IS NOT NULL GROUP BY \`trackingCode\` HAVING COUNT(*) > 1)`) : 0;
-    const dupNid = dupNidRaw ? await rawScalar(`SELECT COUNT(*) AS c FROM \`Users\` WHERE \`nid\` IN (SELECT \`nid\` FROM \`Users\` GROUP BY \`nid\` HAVING COUNT(*) > 1)`) : 0;
+    const dupTracking = !scoped && dupTrackingRaw ? await rawScalar(`SELECT COUNT(*) AS c FROM \`Events\` WHERE \`trackingCode\` IN (SELECT \`trackingCode\` FROM \`Events\` WHERE \`trackingCode\` IS NOT NULL GROUP BY \`trackingCode\` HAVING COUNT(*) > 1)`) : 0;
+    const dupNid = !scoped && dupNidRaw ? await rawScalar(`SELECT COUNT(*) AS c FROM \`Users\` WHERE \`nid\` IN (SELECT \`nid\` FROM \`Users\` GROUP BY \`nid\` HAVING COUNT(*) > 1)`) : 0;
 
     const checks = [
       { id: "no_start", name: "جلسات بدون تاریخ شروع", ok: noStart === 0, count: noStart, hint: "جلسه‌ای که تاریخ شروع ندارد قابل تحلیل زمانی نیست.", route: "events" },
@@ -254,6 +277,8 @@ export async function GET(req: NextRequest) {
       anomalies: anomalies.slice(0, 10),
       quality: { score, checks },
       recommendations,
+      scoped,
+      scopeName: acc.seeAllData ? null : `${acc.user.name ?? ""} ${acc.user.family ?? ""}`.trim(),
     };
     cacheSet(ck, payload);
     return ok(payload);

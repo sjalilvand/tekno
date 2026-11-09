@@ -1,15 +1,20 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { getCurrentUser, ok, fail } from "@/lib/server";
+import { ok, fail, resolveAccess, eventScopeWhere } from "@/lib/server";
 
 // =====================================================================
 // پوشش داده‌ها — تعداد رکورد و بازهٔ تاریخ هر منبع
 // تا «چرا داشبورد خالی است؟» بلافاصله مشخص شود (مثلاً انتقال داده اجرا نشده)
+// ---------------------------------------------------------------
+// نسخهٔ ۶.۹ — اسکوپ مشاور: فقط جلسات/رزروهای/موارد حادِ خودش و مالیات خودش
 // =====================================================================
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser(req);
-  if (!user) return fail("UNAUTHORIZED", 401);
+  const acc = await resolveAccess(req);
+  if (!acc) return fail("UNAUTHORIZED", 401);
+  const seeAll = acc.seeAllData;
+  const evScope = eventScopeWhere(acc);
+  const uid = acc.uid;
 
   async function settled<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
     try { return await fn(); } catch { return fallback; }
@@ -18,29 +23,29 @@ export async function GET(req: NextRequest) {
   const [events, reserves, users, referrs, sms, centers, services, ems, groupEvents, logs, taxes, budgets, rrequests] = await Promise.all([
     settled(async () => {
       const [c, f] = await Promise.all([
-        db.event.count(),
-        db.event.aggregate({ _min: { startDate: true }, _max: { startDate: true } }),
+        db.event.count({ where: evScope }),
+        db.event.aggregate({ where: evScope, _min: { startDate: true }, _max: { startDate: true } }),
       ]);
       return { count: c, first: f._min.startDate, last: f._max.startDate };
     }, { count: 0, first: null, last: null }),
     settled(async () => {
       const [c, f] = await Promise.all([
-        db.eventReserve.count(),
-        db.eventReserve.aggregate({ _min: { date: true }, _max: { date: true } }),
+        db.eventReserve.count({ where: seeAll ? {} : { event: evScope } }),
+        db.eventReserve.aggregate({ where: seeAll ? {} : { event: evScope }, _min: { date: true }, _max: { date: true } }),
       ]);
       return { count: c, first: f._min.date, last: f._max.date };
     }, { count: 0, first: null, last: null }),
-    settled(() => db.user.count(), 0),
-    settled(() => db.referr.count(), 0),
-    settled(() => db.sms.count(), 0),
-    settled(() => db.center.count(), 0),
-    settled(() => db.service.count(), 0),
-    settled(() => db.eventsEms.count(), 0),
-    settled(() => db.groupEvent.count(), 0),
-    settled(() => db.log.count(), 0),
-    settled(() => db.consultantTax.count(), 0),
-    settled(() => db.budget.count(), 0),
-    settled(() => db.referrRequest.count(), 0),
+    settled(() => (seeAll ? db.user.count() : Promise.resolve(0)), 0),
+    settled(() => (seeAll ? db.referr.count() : Promise.resolve(0)), 0),
+    settled(() => (seeAll ? db.sms.count() : Promise.resolve(0)), 0),
+    settled(() => (seeAll ? db.center.count() : Promise.resolve(0)), 0),
+    settled(() => (seeAll ? db.service.count() : Promise.resolve(0)), 0),
+    settled(() => db.eventsEms.count({ where: seeAll ? {} : { event: evScope } }), 0),
+    settled(() => db.groupEvent.count({ where: seeAll ? {} : { acceptorId: uid } }), 0),
+    settled(() => (seeAll ? db.log.count() : Promise.resolve(0)), 0),
+    settled(() => (seeAll ? db.consultantTax.count() : db.consultantTax.count({ where: { userId: uid } })), 0),
+    settled(() => (seeAll ? db.budget.count() : Promise.resolve(0)), 0),
+    settled(() => (seeAll ? db.referrRequest.count() : Promise.resolve(0)), 0),
   ]);
 
   return ok({
