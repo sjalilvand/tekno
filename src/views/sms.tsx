@@ -1,8 +1,8 @@
 "use client";
 // پیامک‌ها و ارسال گروهی
 import * as React from "react";
-import { PageHeader, FilterBar, DataTable, StatCard, Column, LoadingView, StatusBadge } from "@/components/shared";
-import { faNum, faDigits, jDateTime } from "@/lib/jalali";
+import { PageHeader, FilterBar, DataTable, StatCard, Column, LoadingView, StatusBadge, ApplicantCell } from "@/components/shared";
+import { faNum, jDateTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { MessageSquareText, Search, SendHorizonal, CheckCheck, Clock, XCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 type SmsRow = {
   id: number; message: string; status: string; number: number | null; createTime: string;
   sender: { name: string; family: string };
-  receiver: { id: number; name: string; family: string; mobile: number };
+  receiver: { id: number; name: string; family: string; mobile: number; nid: number };
 };
 
 export function SmsView() {
@@ -65,10 +65,7 @@ export function SmsView() {
     {
       header: "گیرنده",
       cell: (s) => (
-        <div>
-          <p className="text-[13px] font-semibold leading-5">{s.receiver.name} {s.receiver.family}</p>
-          <p className="text-[10.5px] tabular-nums text-muted-foreground leading-4" dir="ltr">{faDigits(s.receiver.mobile)}</p>
-        </div>
+        <ApplicantCell userId={s.receiver.id} name={s.receiver.name} family={s.receiver.family} nid={s.receiver.nid} mobile={s.receiver.mobile} />
       ),
     },
     { header: "متن پیامک", cell: (s) => <span className="block max-w-sm truncate text-xs text-muted-foreground" title={s.message}>{s.message}</span> },

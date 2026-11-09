@@ -3,8 +3,8 @@
 import * as React from "react";
 import { PageHeader, FilterBar, DataTable, StatusBadge, NameAvatar, LoadingView, SectionCard, DotBadge, Column } from "@/components/shared";
 import { faNum, faDigits, jDate, jDateTime } from "@/lib/jalali";
-import { api, useQuery } from "@/lib/client";
-import { Users, Search, ShieldCheck, Ban, UserRoundCheck, Phone, CalendarDays, GraduationCap, ScrollText, BadgeCheck } from "lucide-react";
+import { api, useQuery, navigate } from "@/lib/client";
+import { Users, Search, ShieldCheck, Ban, UserRoundCheck, Phone, CalendarDays, GraduationCap, ScrollText, BadgeCheck, FolderOpen } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -83,6 +83,9 @@ export function UsersView() {
       header: "عملیات",
       cell: (u) => (
         <div className="flex gap-1">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); navigate(`cartable?u=${u.id}`); }} title="کارتابل متقاضی">
+            <FolderOpen className="h-4 w-4 text-emerald-600" />
+          </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setSelected(u.id); }} title="پرونده کاربر">
             <UserRoundCheck className="h-4 w-4 text-primary" />
           </Button>

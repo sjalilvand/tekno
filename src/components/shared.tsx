@@ -3,7 +3,8 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { faNum, jDate } from "@/lib/jalali";
-import { ChevronRight, ChevronLeft, Inbox, Loader2 } from "lucide-react";
+import { navigate } from "@/lib/client";
+import { ChevronRight, ChevronLeft, Inbox, Loader2, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -145,6 +146,63 @@ export function NameAvatar({ name, family, color, size = 36 }: { name: string; f
     <span className={cn("avatar-fallback", bg)} style={{ width: size, height: size, fontSize: size * 0.36 }} aria-hidden>
       {initials}
     </span>
+  );
+}
+
+// ---------------- سلول متقاضی — نام + کد ملی + لینک کارتابل ----------------
+// در همهٔ جدول‌هایی که متقاضی دارند استفاده می‌شود تا کد ملی و مشخصات او
+// دیده شود و با یک کلیک کارتابل او باز شود (کارتابل از ?u= پشتیبانی می‌کند)
+export function ApplicantCell({
+  userId,
+  name,
+  family,
+  nid,
+  mobile,
+  avatarColor,
+  size = 32,
+  showMobile = true,
+}: {
+  userId?: number | string | null;
+  name?: string | null;
+  family?: string | null;
+  nid?: number | string | null;
+  mobile?: number | string | null;
+  avatarColor?: string | null;
+  size?: number;
+  showMobile?: boolean;
+}) {
+  const hasNid = nid != null && nid !== 0 && nid !== "";
+  const hasMobile = showMobile && mobile != null && mobile !== 0 && mobile !== "";
+  return (
+    <div className="flex items-center gap-2.5">
+      <NameAvatar name={name ?? "؟"} family={family} color={avatarColor} size={size} />
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <p className="truncate text-[13px] font-semibold leading-5">{`${name ?? "—"} ${family ?? ""}`.trim() || "—"}</p>
+          {userId != null && userId !== 0 && (
+            <button
+              type="button"
+              title="مشاهده کارتابل این متقاضی"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`cartable?u=${userId}`);
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-1.5 py-0.5 text-[9.5px] font-bold text-accent-foreground transition-colors hover:bg-primary hover:text-primary-foreground"
+            >
+              <FolderOpen className="h-3 w-3" />
+              کارتابل
+            </button>
+          )}
+        </div>
+        {(hasNid || hasMobile) && (
+          <p className="text-[10.5px] tabular-nums leading-4 text-muted-foreground">
+            {hasNid && `کد ملی ${faNum(nid)}`}
+            {hasNid && hasMobile && " — "}
+            {hasMobile && faNum(mobile)}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

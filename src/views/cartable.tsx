@@ -159,6 +159,7 @@ export function CartableView() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-bold">{r.name} {r.family}</p>
                   <p className="mt-0.5 text-[10.5px] text-muted-foreground">
+                    {r.nid ? `کد ملی ${faNum(r.nid)} — ` : ""}
                     {faNum(r.sessions)} جلسه {r.pending > 0 && `— ${faNum(r.pending)} در انتظار`}
                     {r.lastSession && ` — آخرین: ${jDate(r.lastSession)}`}
                   </p>

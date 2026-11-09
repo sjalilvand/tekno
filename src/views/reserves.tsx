@@ -1,7 +1,7 @@
 "use client";
 // رزرو مشاوره
 import * as React from "react";
-import { PageHeader, DataTable, StatusBadge, NameAvatar, Column, LoadingView, SectionCard } from "@/components/shared";
+import { PageHeader, DataTable, StatusBadge, NameAvatar, Column, LoadingView, SectionCard, ApplicantCell } from "@/components/shared";
 import { faNum, jDate, jTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { CalendarClock, Search } from "lucide-react";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 
 type ReserveRow = {
   id: number; date: string;
-  event: { id: number; trackingCode: number | null; status: string; topic: string | null; user: { name: string; family: string; avatarColor: string | null }; service: { short: string } };
+  event: { id: number; trackingCode: number | null; status: string; topic: string | null; user: { id: number; name: string; family: string; avatarColor: string | null; nid: number; mobile: number }; service: { short: string } };
 };
 
 type ByConsultant = { id: number; name: string; family: string; avatarColor: string | null; count: number };
@@ -25,10 +25,7 @@ export function ReservesView() {
     {
       header: "مراجع",
       cell: (r) => (
-        <div className="flex items-center gap-2.5">
-          <NameAvatar name={r.event.user.name} family={r.event.user.family} color={r.event.user.avatarColor} size={32} />
-          <p className="text-[13px] font-semibold">{r.event.user.name} {r.event.user.family}</p>
-        </div>
+        <ApplicantCell userId={r.event.user.id} name={r.event.user.name} family={r.event.user.family} nid={r.event.user.nid} mobile={r.event.user.mobile} avatarColor={r.event.user.avatarColor} />
       ),
     },
     { header: "خدمت", cell: (r) => <Badge variant="secondary" className="text-[10.5px] font-semibold">{r.event.service.short}</Badge> },

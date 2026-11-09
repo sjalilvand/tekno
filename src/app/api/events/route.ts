@@ -6,7 +6,7 @@ import type { Prisma } from "@prisma/client";
 const selectEvent = {
   id: true, trackingCode: true, startDate: true, endDate: true, status: true,
   weight: true, userTariff: true, topic: true, isGroup: true,
-  user: { select: { id: true, name: true, family: true, avatarColor: true } },
+  user: { select: { id: true, name: true, family: true, avatarColor: true, nid: true, mobile: true } },
   acceptor: { select: { id: true, name: true, family: true, consultantLevel: true } },
   service: { select: { id: true, short: true, name: true } },
   center: { select: { id: true, title: true, cityTitle: true, provinceTitle: true } },

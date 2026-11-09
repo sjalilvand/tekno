@@ -1,7 +1,7 @@
 "use client";
 // درخواست‌های رزرو کاربران
 import * as React from "react";
-import { PageHeader, DataTable, StatusBadge, Column, LoadingView } from "@/components/shared";
+import { PageHeader, DataTable, StatusBadge, Column, LoadingView, ApplicantCell } from "@/components/shared";
 import { faNum, jDate, jDateTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { Inbox, CheckCircle2, XCircle } from "lucide-react";
@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 type RequestRow = {
   id: number; userName: string | null; description: string | null;
   status: string; creationDate: string; editionDate: string | null;
+  user: { id: number; name: string; family: string; nid: number; mobile: number; avatarColor: string | null } | null;
 };
 
 export function ReferralRequestsView() {
@@ -25,7 +26,15 @@ export function ReferralRequestsView() {
 
   const columns: Column<RequestRow>[] = [
     { header: "کد", cell: (r) => <span className="text-xs font-bold tabular-nums text-primary">{faNum(r.id)}</span> },
-    { header: "کاربر", cell: (r) => <span className="text-[13px] font-semibold">{r.userName ?? "—"}</span> },
+    {
+      header: "کاربر",
+      cell: (r) =>
+        r.user ? (
+          <ApplicantCell userId={r.user.id} name={r.user.name} family={r.user.family} nid={r.user.nid} mobile={r.user.mobile} avatarColor={r.user.avatarColor} />
+        ) : (
+          <span className="text-[13px] font-semibold">{r.userName ?? "—"}</span>
+        ),
+    },
     { header: "توضیحات", cell: (r) => <span className="block max-w-md truncate text-xs text-muted-foreground" title={r.description ?? ""}>{r.description ?? "—"}</span> },
     { header: "ثبت", cell: (r) => <span className="text-xs tabular-nums text-muted-foreground">{jDateTime(r.creationDate)}</span> },
     { header: "آخرین ویرایش", cell: (r) => <span className="text-xs tabular-nums text-muted-foreground">{r.editionDate ? jDate(r.editionDate) : "—"}</span> },

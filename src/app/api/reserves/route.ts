@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
         event: {
           select: {
             id: true, trackingCode: true, status: true, topic: true,
-            user: { select: { name: true, family: true, avatarColor: true } },
+            user: { select: { id: true, name: true, family: true, avatarColor: true, nid: true, mobile: true } },
             service: { select: { short: true } },
           },
         },

@@ -15,7 +15,19 @@ export async function GET(req: NextRequest) {
     db.referrRequest.count({ where }),
     db.referrRequest.findMany({ where, orderBy: { creationDate: "desc" }, skip: (page - 1) * pageSize, take: pageSize }),
   ]);
-  return ok({ total, page, totalPages: Math.ceil(total / pageSize), requests });
+
+  // مشخصات متقاضی (کد ملی، موبایل، ...) با اتصال به جدول کاربران — برای ستون کاربر و لینک کارتابل
+  const userIds = [...new Set(requests.map((r) => r.userId).filter((id) => id > 0))];
+  const users = userIds.length
+    ? await db.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, name: true, family: true, nid: true, mobile: true, avatarColor: true },
+      })
+    : [];
+  const userById = new Map(users.map((u) => [u.id, u]));
+  const withUsers = requests.map((r) => ({ ...r, user: userById.get(r.userId) ?? null }));
+
+  return ok({ total, page, totalPages: Math.ceil(total / pageSize), requests: withUsers });
 }
 
 export async function PATCH(req: NextRequest) {

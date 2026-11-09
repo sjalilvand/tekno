@@ -1,8 +1,8 @@
 "use client";
 // ارجاعات سامانه سها
 import * as React from "react";
-import { PageHeader, FilterBar, DataTable, StatusBadge, Column, LoadingView } from "@/components/shared";
-import { faNum, faDigits, jDate } from "@/lib/jalali";
+import { PageHeader, FilterBar, DataTable, StatusBadge, Column, LoadingView, ApplicantCell } from "@/components/shared";
+import { faNum, jDate } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { ArrowLeftRight, Search, MessageCircleMore } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 
 type ReferrRow = {
-  id: number; refId: number; userName: string | null; userNid: number | null; userMobile: number | null;
+  id: number; refId: number; userId: number; userName: string | null; userNid: number | null; userMobile: number | null;
   description: string | null; sessionsCount: number; status: string; creationDate: string;
   service: { short: string; name: string };
 };
@@ -54,10 +54,7 @@ export function ReferralsView() {
     {
       header: "کاربر",
       cell: (r) => (
-        <div>
-          <p className="text-[13px] font-semibold leading-5">{r.userName ?? "—"}</p>
-          <p className="text-[10.5px] tabular-nums text-muted-foreground leading-4">{faDigits(r.userNid ?? "")}</p>
-        </div>
+        <ApplicantCell userId={r.userId} name={r.userName ?? undefined} nid={r.userNid} mobile={r.userMobile} />
       ),
     },
     { header: "خدمت", cell: (r) => <Badge variant="secondary" className="text-[10.5px] font-semibold">{r.service.short}</Badge> },

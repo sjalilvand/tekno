@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       where,
       include: {
         sender: { select: { name: true, family: true } },
-        receiver: { select: { id: true, name: true, family: true, mobile: true } },
+        receiver: { select: { id: true, name: true, family: true, mobile: true, nid: true } },
       },
       orderBy: { createTime: "desc" },
       skip: (page - 1) * pageSize,

@@ -1,7 +1,7 @@
 "use client";
 // جلسات مشاوره — لیست + جزئیات + زنجیره تایید
 import * as React from "react";
-import { PageHeader, FilterBar, DataTable, StatusBadge, NameAvatar, LoadingView, DateCell, SectionCard, Column } from "@/components/shared";
+import { PageHeader, FilterBar, DataTable, StatusBadge, NameAvatar, LoadingView, DateCell, SectionCard, Column, ApplicantCell } from "@/components/shared";
 import { faNum, faDigits, faMoney, jDate, jDateTime, jTime } from "@/lib/jalali";
 import { api, useQuery } from "@/lib/client";
 import { CalendarCheck, Search, CheckCircle2, XCircle, MessageSquarePlus, Clock, FileText, Stethoscope, Activity, Pill, CircleCheck, CircleX, Circle, Siren } from "lucide-react";
@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 type EventRow = {
   id: number; trackingCode: number | null; startDate: string | null; status: string;
   weight: number; userTariff: number; topic: string | null;
-  user: { id: number; name: string; family: string; avatarColor: string | null };
+  user: { id: number; name: string; family: string; avatarColor: string | null; nid: number; mobile: number };
   acceptor: { id: number; name: string; family: string; consultantLevel: number | null } | null;
   service: { id: number; short: string; name: string };
   center: { id: number; title: string; cityTitle: string; provinceTitle: string };
@@ -90,10 +90,7 @@ export function EventsView() {
     {
       header: "مراجع",
       cell: (e) => (
-        <div className="flex items-center gap-2.5">
-          <NameAvatar name={e.user.name} family={e.user.family} color={e.user.avatarColor} size={32} />
-          <p className="text-[13px] font-semibold">{e.user.name} {e.user.family}</p>
-        </div>
+        <ApplicantCell userId={e.user.id} name={e.user.name} family={e.user.family} nid={e.user.nid} mobile={e.user.mobile} avatarColor={e.user.avatarColor} />
       ),
     },
     { header: "خدمت", cell: (e) => <Badge variant="secondary" className="text-[10.5px] font-semibold">{e.service.short}</Badge> },
