@@ -32,6 +32,10 @@ param(
   [string]$RepoUrl    = "https://github.com/sjalilvand/tekno.git",
   [string]$Branch     = "main",
 
+  # توکن GitHub برای دریافت کد — اگر ست شود، آدرس origin به‌روز می‌شود
+  # (توکن قبلی باطل شده است؛ بدون توکن معتبر، به‌روزرسانی از GitHub انجام نمی‌شود)
+  [string]$GithubToken = "",
+
   # mysql | sqlite
   [ValidateSet("mysql", "sqlite")]
   [string]$DbEngine = "mysql",
@@ -144,6 +148,12 @@ function Get-Source {
   Write-Step "دریافت کد سامانه از $RepoUrl"
   if (Test-Path (Join-Path $InstallDir ".git")) {
     Push-Location $InstallDir
+    # اگر توکن تازه داده شده، آدرس origin با توکن جدید بازنویسی شود
+    if ($GithubToken) {
+      $repoPath = $RepoUrl -replace '^https?://', ''
+      Invoke-Native { git remote set-url origin "https://$GithubToken@$repoPath" | Out-Null }
+      Write-Ok "توکن GitHub در آدرس مخزن به‌روزرسانی شد"
+    }
     # اتصال به GitHub گاهی ناپایدار است — تا ۳ بار تلاش می‌شود
     $fetchOk = $false
     foreach ($i in 1..3) {
