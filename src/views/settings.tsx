@@ -3,13 +3,169 @@
 import * as React from "react";
 import { PageHeader, SectionCard, LoadingView } from "@/components/shared";
 import { api, useQuery } from "@/lib/client";
-import { Settings, Save, KeyRound, MonitorSmartphone, Database, PlugZap, RefreshCw, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Settings, Save, KeyRound, MonitorSmartphone, Database, PlugZap, RefreshCw, CheckCircle2, XCircle, Loader2, Palette, Moon, Sun, Type, Rows3, Squircle, Square } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import { useTheme } from "next-themes";
 import { jDateTime, faNum } from "@/lib/jalali";
+import { APPEARANCE_KEY, applyAppearance, readAppearance, type Appearance } from "@/lib/appearance";
+
+// =====================================================================
+// ظاهر و قالب — شخصی‌سازی توسط هر کاربر (نسخهٔ ۶.۱۲)
+// =====================================================================
+export const APPEARANCE_PRESETS: { key: string; label: string; swatch: string[] }[] = [
+  { key: "rose", label: "رز (پیش‌فرض)", swatch: ["#a83a54", "#7c2740"] },
+  { key: "burgundy", label: "زرشکی کلاسیک", swatch: ["#7c2740", "#4d1425"] },
+  { key: "indigo", label: "نیلی مدرن", swatch: ["#4f46e5", "#312e81"] },
+  { key: "teal", label: "فیروزه‌ای آرام", swatch: ["#0d9488", "#115e59"] },
+  { key: "forest", label: "سبز جنگلی", swatch: ["#16a34a", "#14532d"] },
+  { key: "slate", label: "خاکستری حرفه‌ای", swatch: ["#475569", "#1e293b"] },
+];
+
+function AppearanceCard() {
+  const [current, setCurrent] = React.useState<Appearance>(() => ({ accent: "rose", font: "md", density: "cozy", radius: "round" }));
+  const { toast } = useToast();
+  const { theme, setTheme } = useTheme();
+
+  React.useEffect(() => {
+    setCurrent(readAppearance());
+  }, []);
+
+  const update = (patch: Partial<Appearance>) => {
+    const next = { ...current, ...patch };
+    setCurrent(next);
+    applyAppearance(next);
+    try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next)); } catch { /* نادیده */ }
+  };
+
+  const mode = (theme as string) ?? "system";
+
+  return (
+    <SectionCard title="ظاهر و قالب" subtitle="شخصی‌سازی رنگ، فونت، تراکم و قالب — اختصاصی همین کاربر">
+      <div className="space-y-5">
+        {/* حالت نمایش */}
+        <div>
+          <p className="mb-2 text-[11px] font-extrabold text-muted-foreground">حالت نمایش</p>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { key: "light", label: "روشن", icon: Sun },
+              { key: "dark", label: "تیره", icon: Moon },
+              { key: "system", label: "سیستم", icon: MonitorSmartphone },
+            ] as const).map((m) => (
+              <button
+                key={m.key}
+                onClick={() => setTheme(m.key)}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 rounded-xl border px-3 py-3 text-[11px] font-bold transition-all",
+                  mode === m.key ? "border-primary bg-accent text-accent-foreground shadow-sm" : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                <m.icon className="h-4.5 w-4.5" /> {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* پالت رنگی */}
+        <div>
+          <p className="mb-2 text-[11px] font-extrabold text-muted-foreground">پالت رنگی</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {APPEARANCE_PRESETS.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => update({ accent: p.key })}
+                className={cn(
+                  "flex items-center gap-2 rounded-xl border px-2.5 py-2 text-[11px] font-bold transition-all",
+                  current.accent === p.key ? "border-primary bg-accent text-accent-foreground shadow-sm" : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                <span className="flex h-5 w-9 overflow-hidden rounded-md border border-black/10">
+                  <span className="h-full flex-1" style={{ background: p.swatch[0] }} />
+                  <span className="h-full flex-1" style={{ background: p.swatch[1] }} />
+                </span>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* اندازه فونت */}
+        <div>
+          <p className="mb-2 text-[11px] font-extrabold text-muted-foreground">اندازهٔ فونت</p>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { key: "sm", label: "کوچک", icon: Type },
+              { key: "md", label: "متوسط", icon: Type },
+              { key: "lg", label: "بزرگ", icon: Type },
+            ] as const).map((f) => (
+              <button
+                key={f.key}
+                onClick={() => update({ font: f.key })}
+                className={cn(
+                  "flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-bold transition-all",
+                  current.font === f.key ? "border-primary bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                <Type className={cn("h-4 w-4", f.key === "sm" && "h-3.5 w-3.5", f.key === "lg" && "h-5 w-5")} /> {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* تراکم نمایش */}
+        <div>
+          <p className="mb-2 text-[11px] font-extrabold text-muted-foreground">تراکم صفحه (قالب)</p>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { key: "compact", label: "فشرده", icon: Rows3 },
+              { key: "cozy", label: "استاندارد", icon: Rows3 },
+              { key: "roomy", label: "راحت", icon: Rows3 },
+            ] as const).map((d) => (
+              <button
+                key={d.key}
+                onClick={() => update({ density: d.key })}
+                className={cn(
+                  "flex flex-col items-center gap-1 rounded-xl border px-3 py-2.5 text-[11px] font-bold transition-all",
+                  current.density === d.key ? "border-primary bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                <Rows3 className={cn("h-4 w-4", d.key === "compact" && "scale-y-75", d.key === "roomy" && "scale-y-125")} /> {d.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* گردی گوشه‌ها */}
+        <div>
+          <p className="mb-2 text-[11px] font-extrabold text-muted-foreground">گردی گوشه‌ها</p>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { key: "sharp", label: "تیز", icon: Square },
+              { key: "round", label: "گرد", icon: Squircle },
+              { key: "soft", label: "خیلی گرد", icon: Squircle },
+            ] as const).map((r) => (
+              <button
+                key={r.key}
+                onClick={() => update({ radius: r.key })}
+                className={cn(
+                  "flex flex-col items-center gap-1 rounded-xl border px-3 py-2.5 text-[11px] font-bold transition-all",
+                  current.radius === r.key ? "border-primary bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                <span className={cn("border-2 border-current", r.key === "sharp" ? "h-5 w-5" : r.key === "round" ? "h-5 w-5 rounded-md" : "h-5 w-5 rounded-xl")} />
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
 
 type SettingRow = { name: string; value: string | null; group: string };
 type SessionRow = { id: string; ip: string | null; browser: string | null; dateTime: string; user: { name: string; family: string } };
@@ -207,6 +363,9 @@ export function SettingsView() {
       <PageHeader title="تنظیمات سامانه" subtitle="پیکربندی عمومی، پیامک، جلسات و موارد حاد" icon={<Settings className="h-5 w-5" />} />
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <div className="lg:col-span-2">
+          <AppearanceCard />
+        </div>
         <div className="lg:col-span-2">
           <DatabaseConnectionCard />
         </div>

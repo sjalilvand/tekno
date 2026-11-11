@@ -8,6 +8,9 @@ import { CartableView } from "@/views/cartable";
 import { FormsView } from "@/views/forms";
 import { ChecklistsView } from "@/views/checklists";
 import { BiView } from "@/views/bi";
+import { AtlasView } from "@/views/atlas";
+import { PsychView } from "@/views/psych";
+import { TrainingView } from "@/views/training";
 import { ReportBuilderView } from "@/views/report-builder";
 import { ProcessesView } from "@/views/processes";
 import { EventsView } from "@/views/events";
@@ -96,6 +99,9 @@ function ShellWithRouter({
   const view = React.useMemo(() => {
     switch (route) {
       case "bi": return <BiView />;
+      case "atlas": return <AtlasView />;
+      case "psych": return <PsychView />;
+      case "training": return <TrainingView />;
       case "reports": return <ReportBuilderView />;
       case "processes": return <ProcessesView />;
       case "cartable": return <CartableView />;

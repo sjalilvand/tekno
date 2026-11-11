@@ -15,7 +15,11 @@ export const PERM_MODULES: PermModule[] = [
   // نگاه کلی
   { key: "dashboard", label: "داشبورد", group: "نگاه کلی" },
   { key: "bi", label: "داشبوردهای مدیریتی", group: "نگاه کلی" },
+  { key: "atlas", label: "اطلس مراکز رز", group: "نگاه کلی" },
   { key: "processes", label: "فرایندهای سازمانی (BPMN)", group: "نگاه کلی" },
+  // آزمون و آموزش
+  { key: "psych", label: "آزمون‌های روان‌شناختی", group: "آزمون و آموزش" },
+  { key: "training", label: "آموزش‌ها", group: "آزمون و آموزش" },
   // ابزارها
   { key: "reports", label: "گزارش‌ساز حرفه‌ای", group: "ابزارها" },
   { key: "forms", label: "فرم‌ساز", group: "ابزارها" },
@@ -162,7 +166,7 @@ export const PERM_PRESETS: { key: string; label: string; modules: string[] }[] =
   {
     key: "consultant",
     label: "مشاور",
-    modules: ["dashboard", "cartable", "events", "group-events", "reserves", "ems", "risk-model", "forms", "checklists", "messages", "profile", "helps", "tickets"],
+    modules: ["dashboard", "cartable", "events", "group-events", "reserves", "ems", "risk-model", "psych", "training", "forms", "checklists", "messages", "profile", "helps", "tickets"],
   },
   {
     key: "secretary",
@@ -177,7 +181,7 @@ export const PERM_PRESETS: { key: string; label: string; modules: string[] }[] =
   {
     key: "viewer",
     label: "مشاهده‌گر (فقط خواندن)",
-    modules: ["dashboard", "bi", "reports", "profile", "helps", "tickets"],
+    modules: ["dashboard", "bi", "atlas", "reports", "training", "profile", "helps", "tickets"],
   },
   { key: "none", label: "بدون دسترسی", modules: ["profile", "helps", "tickets"] },
 ];

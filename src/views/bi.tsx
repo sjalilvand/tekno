@@ -16,8 +16,9 @@ import {
   AlertTriangle, Activity, RefreshCw, Printer, ShieldAlert, Database, FilterX, Repeat2,
   Percent, Wallet, Hourglass, Ban, Info, ArrowLeftRight, Download, Loader2,
   CalendarCheck as CalendarCheckIcon, CheckCircle2 as CheckCircleIcon, Siren,
-  UserRoundCheck as UserRoundCheckIcon,
+  UserRoundCheck as UserRoundCheckIcon, Map,
 } from "lucide-react";
+import { IranMap, toneForPerformance } from "@/components/iran-map";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -295,6 +296,7 @@ export function BiView() {
           <TabsTrigger value="interpret" className="gap-1.5"><Lightbulb className="h-3.5 w-3.5" /> تفسیری</TabsTrigger>
           <TabsTrigger value="anomaly" className="gap-1.5"><ShieldAlert className="h-3.5 w-3.5" /> کشف خطا</TabsTrigger>
           <TabsTrigger value="advice" className="gap-1.5"><Sparkles className="h-3.5 w-3.5" /> پیشنهادی</TabsTrigger>
+          <TabsTrigger value="map" className="gap-1.5"><Map className="h-3.5 w-3.5" /> نقشهٔ مراکز</TabsTrigger>
         </TabsList>
 
         <TabsContent value="descriptive" className="mt-4 space-y-4">
@@ -317,6 +319,9 @@ export function BiView() {
         </TabsContent>
         <TabsContent value="advice" className="mt-4">
           {ins.loading && !ins.data ? <ChartSkeleton /> : ins.data ? <AdviceTab data={ins.data} /> : null}
+        </TabsContent>
+        <TabsContent value="map" className="mt-4">
+          <BiMapTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -799,6 +804,80 @@ function TrendRow({ label, value, ref: refValue, pct }: { label: string; value: 
       <p className="mt-1 text-sm font-extrabold tabular-nums">
         {faNum(value)} <span className="text-[10px] font-normal text-muted-foreground">در برابر {faNum(refValue)}</span>
       </p>
+    </div>
+  );
+}
+
+// ---------------- تب نقشهٔ مراکز — اطلس عملکرد بر پایهٔ /api/atlas (نسخهٔ ۶.۱۲) ----------------
+function BiMapTab() {
+  const atlas = useQuery<{ items: any[]; totals: any }>(() => api("/api/atlas"), []);
+  const [selectedId, setSelectedId] = React.useState<number | null>(null);
+
+  if (atlas.loading && !atlas.data) {
+    return <div className="flex items-center justify-center gap-2 rounded-2xl border bg-card py-16 text-xs text-muted-foreground">
+      <Loader2 className="h-4 w-4 animate-spin" /> در حال بارگذاری نقشهٔ مراکز...
+    </div>;
+  }
+  if (atlas.error || !atlas.data) {
+    return <p className="rounded-2xl border border-dashed py-12 text-center text-xs text-muted-foreground">{atlas.error ?? "اطلاعات مراکز در دسترس نیست"}</p>;
+  }
+
+  const items = atlas.data.items as Array<{
+    id: number; title: string; provinceTitle: string; cityTitle: string; isEnabled: boolean;
+    confirmedSessions: number; income: number; applicants: number; emsCount: number; lastActivity: string | null;
+  }>;
+  const selected = items.find((i) => i.id === selectedId) ?? null;
+  const top = [...items].sort((a, b) => b.confirmedSessions - a.confirmedSessions || b.income - a.income).slice(0, 5);
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-3">
+      <SectionCard title="وضعیت هر کلینیک روی نقشه" subtitle="رنگ نشانگر = سطح عملکرد — کلیک برای جزئیات" className="lg:col-span-2">
+        <IranMap
+          markers={items.map((c) => ({
+            id: c.id, title: c.title, provinceId: (c as any).provinceId,
+            tone: toneForPerformance(c.income, c.confirmedSessions, c.isEnabled),
+            value: c.confirmedSessions === 0 ? "بدون جلسه" : `${faNum(c.confirmedSessions)} جلسه`,
+            sub: `${c.provinceTitle} / ${c.cityTitle} — درآمد ${faMoney(c.income)} ریال`,
+          }))}
+          selectedId={selectedId}
+          onSelect={(id) => setSelectedId(Number(id))}
+        />
+      </SectionCard>
+      <div className="space-y-4">
+        {selected ? (
+          <SectionCard title={selected.title} subtitle={`${selected.provinceTitle} / ${selected.cityTitle}`}>
+            <div className="grid grid-cols-2 gap-2 text-center">
+              {[
+                { label: "جلسات تاییدشده", value: faNum(selected.confirmedSessions) },
+                { label: "درآمد (ریال)", value: faMoney(selected.income) },
+                { label: "متقاضیان", value: faNum(selected.applicants) },
+                { label: "موارد حاد", value: faNum(selected.emsCount) },
+              ].map((k) => (
+                <div key={k.label} className="rounded-xl border bg-muted/40 px-2 py-2.5">
+                  <p className="text-sm font-black tabular-nums">{k.value}</p>
+                  <p className="mt-0.5 text-[9.5px] text-muted-foreground">{k.label}</p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-center text-[10.5px] text-muted-foreground">
+              آخرین فعالیت: {selected.lastActivity ? jDate(selected.lastActivity) : "—"}
+            </p>
+          </SectionCard>
+        ) : null}
+        <SectionCard title="برترین مراکز" subtitle="بر اساس جلسات تاییدشده">
+          <ul className="space-y-2">
+            {top.map((c, i) => (
+              <li key={c.id}>
+                <button onClick={() => setSelectedId(c.id)} className="flex w-full items-center gap-2.5 rounded-xl border bg-muted/40 px-3 py-2 text-right transition-colors hover:bg-accent">
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-black ${i === 0 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>{faNum(i + 1)}</span>
+                  <span className="min-w-0 flex-1 truncate text-[11.5px] font-bold">{c.title}</span>
+                  <span className="text-[11px] font-black tabular-nums">{faNum(c.confirmedSessions)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      </div>
     </div>
   );
 }

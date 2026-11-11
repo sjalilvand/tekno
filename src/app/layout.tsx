@@ -6,6 +6,7 @@ import { ThemeProvider } from "next-themes";
 import { PwaRegister } from "@/components/pwa-register";
 
 import { BRAND } from "@/lib/brand";
+import { APPEARANCE_BOOT_SCRIPT } from "@/lib/appearance";
 
 export const metadata: Metadata = {
   title: `${BRAND.name} | سامانه مدیریت مشاوره و روان‌درمانی`,
@@ -38,8 +39,12 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="fa" dir="rtl" suppressHydrationWarning>
+      <head>
+        {/* شخصی‌سازی ظاهر — قبل از رنگ‌آمیزی اعمال می‌شود تا پرش تم نداشته باشیم (۶.۱۲) */}
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
+      </head>
       <body className="font-sans antialiased">
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
           {children}
           <Toaster />
           <PwaRegister />

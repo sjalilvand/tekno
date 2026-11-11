@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { JalaliDatePicker } from "@/components/ui/jalali-date-picker";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 
@@ -101,8 +102,8 @@ export function OccasionsView() {
               <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="مثال: هفته سلامت روان" />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">تاریخ نمایش</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="text-xs" />
+              <Label className="text-xs">تاریخ نمایش (شمسی)</Label>
+              <JalaliDatePicker value={date} onChange={setDate} className="w-full" />
             </div>
           </div>
           <DialogFooter>

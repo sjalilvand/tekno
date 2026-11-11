@@ -12,7 +12,7 @@ import {
   MessageSquareText, Mail, CalendarHeart, ScrollText, LifeBuoy, Settings, BookOpen,
   ChevronsLeft, ChevronDown, Moon, Sun, Bell, LogOut, UserRound, Menu, Flower2, Search, PlugZap,
   FileBarChart2, PanelRightClose, PanelRightOpen, X, Network, FolderOpen, ClipboardPlus, ListChecks, DatabaseBackup,
-  BrainCircuit, Loader2,
+  BrainCircuit, Loader2, Map, ClipboardList, GraduationCap,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -47,7 +47,12 @@ const NAV: NavGroup[] = [
   { label: "نگاه کلی", items: [
     { key: "dashboard", label: "داشبورد", icon: LayoutDashboard },
     { key: "bi", label: "داشبوردهای مدیریتی", icon: BarChart3 },
+    { key: "atlas", label: "اطلس مراکز رز", icon: Map },
     { key: "processes", label: "فرایندهای سازمانی (BPMN)", icon: Network },
+  ]},
+  { label: "آزمون و آموزش", items: [
+    { key: "psych", label: "آزمون‌های روان‌شناختی", icon: ClipboardList },
+    { key: "training", label: "آموزش‌ها", icon: GraduationCap },
   ]},
   { label: "ابزارها", items: [
     { key: "reports", label: "گزارش‌ساز حرفه‌ای", icon: FileBarChart2 },

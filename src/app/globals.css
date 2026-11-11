@@ -271,3 +271,128 @@
   animation: token-pulse 1.2s ease-in-out infinite;
   pointer-events: none;
 }
+
+/* =====================================================================
+   شخصی‌سازی ظاهر — نسخهٔ ۶.۱۲
+   پالت‌های رنگی، اندازهٔ فونت، تراکم و گردی گوشه‌ها با data-attribute
+   ===================================================================== */
+
+/* ── اندازهٔ فونت پایه ── */
+html { font-size: 15px; }
+html[data-font="sm"] { font-size: 13.5px; }
+html[data-font="md"] { font-size: 15px; }
+html[data-font="lg"] { font-size: 16.5px; }
+
+/* ── تراکم نمایش ── */
+html[data-density="compact"] main.px-4 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+html[data-density="compact"] td, html[data-density="compact"] th { padding-top: 0.35rem; padding-bottom: 0.35rem; }
+html[data-density="cozy"] td, html[data-density="cozy"] th { padding-top: 0.55rem; padding-bottom: 0.55rem; }
+html[data-density="roomy"] td, html[data-density="roomy"] th { padding-top: 0.85rem; padding-bottom: 0.85rem; }
+html[data-density="roomy"] main.px-4 { padding-top: 2rem; padding-bottom: 2rem; }
+
+/* ── گردی گوشه‌ها ── */
+html[data-radius="sharp"] { --radius: 0.35rem; }
+html[data-radius="round"] { --radius: 0.75rem; }
+html[data-radius="soft"] { --radius: 1.15rem; }
+
+/* ── پالت‌های رنگی (روشن) ── */
+html[data-accent="burgundy"] {
+  --primary: #7c2740; --primary-foreground: #fdf2f5;
+  --secondary: #f5e9ed; --secondary-foreground: #5c1c30;
+  --accent: #f3dfe5; --accent-foreground: #7c2740;
+  --ring: #7c2740; --chart-1: #7c2740; --chart-2: #c99a5b;
+  --sidebar-primary: #7c2740; --sidebar-accent: #f5e9ed; --sidebar-accent-foreground: #5c1c30; --sidebar-ring: #7c2740;
+}
+html[data-accent="indigo"] {
+  --primary: #4f46e5; --primary-foreground: #eef2ff;
+  --secondary: #ecebfe; --secondary-foreground: #3730a3;
+  --accent: #e4e2fc; --accent-foreground: #4f46e5;
+  --ring: #4f46e5; --chart-1: #4f46e5; --chart-2: #f59e0b;
+  --sidebar-primary: #4f46e5; --sidebar-accent: #ecebfe; --sidebar-accent-foreground: #3730a3; --sidebar-ring: #4f46e5;
+}
+html[data-accent="teal"] {
+  --primary: #0d9488; --primary-foreground: #f0fdfa;
+  --secondary: #d9f2ef; --secondary-foreground: #115e59;
+  --accent: #ccebe7; --accent-foreground: #0d9488;
+  --ring: #0d9488; --chart-1: #0d9488; --chart-2: #f59e0b;
+  --sidebar-primary: #0d9488; --sidebar-accent: #d9f2ef; --sidebar-accent-foreground: #115e59; --sidebar-ring: #0d9488;
+}
+html[data-accent="forest"] {
+  --primary: #16a34a; --primary-foreground: #f0fdf4;
+  --secondary: #dcf3e3; --secondary-foreground: #14532d;
+  --accent: #cdeeda; --accent-foreground: #16a34a;
+  --ring: #16a34a; --chart-1: #16a34a; --chart-2: #ca8a04;
+  --sidebar-primary: #16a34a; --sidebar-accent: #dcf3e3; --sidebar-accent-foreground: #14532d; --sidebar-ring: #16a34a;
+}
+html[data-accent="slate"] {
+  --primary: #475569; --primary-foreground: #f8fafc;
+  --secondary: #e8edf3; --secondary-foreground: #1e293b;
+  --accent: #dde5ee; --accent-foreground: #334155;
+  --ring: #475569; --chart-1: #475569; --chart-2: #0891b2;
+  --sidebar-primary: #475569; --sidebar-accent: #e8edf3; --sidebar-accent-foreground: #1e293b; --sidebar-ring: #475569;
+}
+
+/* ── پالت‌های رنگی (تیره) ── */
+html.dark[data-accent="burgundy"] {
+  --primary: #d97b90; --primary-foreground: #2b0d16;
+  --secondary: #332329; --secondary-foreground: #eecdd5;
+  --accent: #452730; --accent-foreground: #f0b7c4;
+  --ring: #d97b90; --chart-1: #d97b90; --chart-2: #d9b380;
+  --sidebar-primary: #d97b90; --sidebar-accent: #3a252c; --sidebar-accent-foreground: #f0b7c4; --sidebar-ring: #d97b90;
+}
+html.dark[data-accent="indigo"] {
+  --primary: #818cf8; --primary-foreground: #1e1b4b;
+  --secondary: #2c2a4d; --secondary-foreground: #d6d3fa;
+  --accent: #34315e; --accent-foreground: #c7d2fe;
+  --ring: #818cf8; --chart-1: #818cf8; --chart-2: #fbbf24;
+  --sidebar-primary: #818cf8; --sidebar-accent: #2f2c55; --sidebar-accent-foreground: #c7d2fe; --sidebar-ring: #818cf8;
+}
+html.dark[data-accent="teal"] {
+  --primary: #2dd4bf; --primary-foreground: #042f2e;
+  --secondary: #1d3a37; --secondary-foreground: #99f6e4;
+  --accent: #234b46; --accent-foreground: #5eead4;
+  --ring: #2dd4bf; --chart-1: #2dd4bf; --chart-2: #fbbf24;
+  --sidebar-primary: #2dd4bf; --sidebar-accent: #214441; --sidebar-accent-foreground: #5eead4; --sidebar-ring: #2dd4bf;
+}
+html.dark[data-accent="forest"] {
+  --primary: #4ade80; --primary-foreground: #052e16;
+  --secondary: #1c3a27; --secondary-foreground: #bbf7d0;
+  --accent: #245035; --accent-foreground: #86efac;
+  --ring: #4ade80; --chart-1: #4ade80; --chart-2: #facc15;
+  --sidebar-primary: #4ade80; --sidebar-accent: #20472f; --sidebar-accent-foreground: #86efac; --sidebar-ring: #4ade80;
+}
+html.dark[data-accent="slate"] {
+  --primary: #94a3b8; --primary-foreground: #0f172a;
+  --secondary: #2b3648; --secondary-foreground: #e2e8f0;
+  --accent: #334155; --accent-foreground: #cbd5e1;
+  --ring: #94a3b8; --chart-1: #94a3b8; --chart-2: #22d3ee;
+  --sidebar-primary: #94a3b8; --sidebar-accent: #2e3a4e; --sidebar-accent-foreground: #cbd5e1; --sidebar-ring: #94a3b8;
+}
+
+/* ── پولیش UI/UX (نسخهٔ ۶.۱۲) ── */
+/* کارت‌ها: سایهٔ نرم‌تر و گذار بهتر */
+.rounded-2xl.border.bg-card {
+  box-shadow: 0 1px 2px rgba(16, 8, 12, 0.04), 0 4px 16px -8px rgba(124, 39, 64, 0.08);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+html.dark .rounded-2xl.border.bg-card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px -8px rgba(0, 0, 0, 0.4);
+}
+/* فوکوس keyboard پیداتر */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 65%, transparent);
+  outline-offset: 2px;
+}
+/* هدینگ‌ها: فاصلهٔ حروف بهتر برای فارسی */
+h1, h2, h3 {
+  letter-spacing: -0.01em;
+}
+/* لینک‌های متنی */
+.link {
+  color: var(--primary);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.15s ease;
+}
+.link:hover { text-decoration-color: var(--primary); }

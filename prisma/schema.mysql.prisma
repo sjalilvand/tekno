@@ -133,6 +133,8 @@ model User {
   bio            String?
 
   roles          UserRole[]
+  psychAttempts  PsychTestAttempt[] @relation("PsychAttemptUser")
+  trainingAttempts TrainingAttempt[] @relation("TrainingAttemptUser")
   eventsAsClient Event[]    @relation("EventClient")
   eventsAsAcceptor Event[]  @relation("EventAcceptor")
   eventsAsSupervisor Event[] @relation("EventSupervisor")
@@ -245,6 +247,13 @@ model Center {
   provinceId  Int
   province    Province       @relation(fields: [provinceId], references: [id])
   provinceTitle String
+  postalCode  String?
+  managerName String?
+  managerPhone String?
+  workingHours String?
+  latitude    Float?
+  longitude   Float?
+  mapUrl      String?
   events      Event[]
   bankAccounts CenterBankAccount[]
   equipments  CenterEquipment[]
@@ -1201,4 +1210,113 @@ model ImportJob {
   finishedAt DateTime?
 
   @@map("ImportJobs")
+}
+
+// ---------------------------------------------------------------------
+// آزمون‌های روان‌شناختی، آموزش‌ها و حسابداری — نسخهٔ ۶.۱۲
+// منبع محتوا: مخزن special-spoon (بانک آزمون‌ها + آموزش‌ها + کلینیک‌های رز)
+// ---------------------------------------------------------------------
+
+model PsychTest {
+  id              Int       @id @default(autoincrement())
+  slug            String    @unique
+  title           String
+  code            String?
+  topic           String    @default("عمومی")
+  description     String?
+  ageRange        String?
+  minutes         Int?
+  color           String    @default("#a83a54")
+  sortOrder       Int       @default(999)
+  questions       String // JSON: [{prompt,options:[[label,score]],subscale?,image?}]
+  interpretations String? // JSON: [{scoreMin,scoreMax,label,guidance}]
+  scales          String? // JSON: زیرمقیاس‌ها با سطوح تفسیر
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  attempts        PsychTestAttempt[]
+
+  @@map("PsychTests")
+}
+
+model PsychTestAttempt {
+  id             Int       @id @default(autoincrement())
+  testId         Int
+  test           PsychTest @relation(fields: [testId], references: [id])
+  userId         Int // کاربر ثبت‌کننده (مشاور/خود فرد)
+  user           User      @relation("PsychAttemptUser", fields: [userId], references: [id])
+  subjectName    String? // نام آزمون‌دهنده — در صورت ثبت برای متقاضی
+  subjectNid     BigInt? // کد ملی متقاضی
+  answers        String // JSON: [optionIndex, ...]
+  score          Int       @default(0)
+  percent        Int       @default(0)
+  resultLabel    String?
+  resultGuidance String?
+  subscores      String? // JSON: [{key,title,score,level,text}]
+  createdAt      DateTime  @default(now())
+
+  @@index([testId])
+  @@index([userId])
+  @@index([subjectNid])
+  @@map("PsychTestAttempts")
+}
+
+model TrainingItem {
+  id              Int       @id @default(autoincrement())
+  kind            String    @default("content") // content | course | exam
+  slug            String    @unique
+  title           String
+  summary         String?
+  body            String?
+  topic           String?
+  tag             String?
+  price           Int       @default(0) // ریال — صفر = رایگان
+  capacity        Int?
+  startAt         DateTime?
+  sessions        String? // JSON: [{title,durationMinutes}]
+  questions       String? // JSON (kind=exam): [{prompt,options,correctIndex}]
+  passPercent     Int       @default(60)
+  durationMinutes Int       @default(20)
+  status          String    @default("published") // draft | published
+  createdBy       Int?
+  createdAt       DateTime  @default(now())
+  attempts        TrainingAttempt[]
+
+  @@index([kind])
+  @@map("TrainingItems")
+}
+
+model TrainingAttempt {
+  id           Int          @id @default(autoincrement())
+  itemId       Int
+  item         TrainingItem @relation(fields: [itemId], references: [id])
+  userId       Int
+  user         User         @relation("TrainingAttemptUser", fields: [userId], references: [id])
+  answers      String // JSON: [optionIndex, ...]
+  scorePercent Int          @default(0)
+  passed       Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  @@index([itemId])
+  @@index([userId])
+  @@map("TrainingAttempts")
+}
+
+model FinanceTransaction {
+  id          Int      @id @default(autoincrement())
+  kind        String // income | expense
+  title       String
+  category    String   @default("عمومی")
+  amount      BigInt
+  method      String? // cash | card | transfer | cheque | online
+  centerId    Int?
+  eventId     Int?
+  occurredAt  DateTime
+  description String?
+  createdBy   Int?
+  createdAt   DateTime @default(now())
+
+  @@index([kind])
+  @@index([centerId])
+  @@index([occurredAt])
+  @@map("FinanceTransactions")
 }

@@ -54,6 +54,12 @@ async function login(username: string, password: string) {
 
 async function main() {
   console.log("── ۱) آماده‌سازی دادهٔ آزمایشی");
+  // نسخهٔ ۶.۱۲ — پاک‌سازی جدول‌های جدید (وابسته به User) پیش از حذف کاربران
+  await db.psychTestAttempt.deleteMany();
+  await db.trainingAttempt.deleteMany();
+  await db.trainingItem.deleteMany();
+  await db.psychTest.deleteMany();
+  await db.financeTransaction.deleteMany();
   await db.session.deleteMany();
   await db.eventReserve.deleteMany();
   await db.eventsEms.deleteMany();
