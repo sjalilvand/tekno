@@ -1,5 +1,9 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۱۵)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۱۶)
+#  تغییرات ۶.۱۶: مشخصات اتصال MySQL از .env قبلی خوانده می‌شود حتی بدون
+#  -MysqlPassword (رفع شکست پاک‌ساز تاریخ صفر در حالت update — پاک‌ساز با
+#  آدرس بی‌رمز به دیتابیس راه نمی‌برد) + تلاش دوم خودکار prisma db push
+#  پس از پاک‌سازی مجدد در برخورد دوباره با «Incorrect datetime value»
 #  تغییرات ۶.۱۵: رفع شکست «prisma db push» روی دیتابیس legacy —
 #  پاک‌سازی خودکار تاریخ‌های صفر («0000-00-00») قبل از db push و بعد از انتقال +
 #  درون‌ریز: تاریخ نامعتبر legacy → NULL (به‌جای شکست درج) + تلاش ردیف‌به‌ردیف
@@ -68,6 +72,29 @@ $PSStyle = $null  # سازگاری با PowerShell 5.1
 # مهم: اگر از اجرای قبلی NODE_ENV=production در همین سشن PowerShell مانده باشد،
 # npm آن را بهانهٔ حذف وابستگی‌های dev (tsx، typescript، tailwindcss و…) می‌گیرد
 Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
+
+# ------------------------------------------------------------- مشخصات MySQL از .env قبلی
+# اگر .env نصب قبلی یک رشتهٔ اتصال mysql/mariadb دارد، هر پارامتری که کاربر
+# صریحاً نداده باشد از همان خوانده می‌شود (میزبان/پورت/کاربر/رمز/نام دیتابیس).
+# بدون این، «-Mode update» بدون -MysqlPassword آدرس بی‌رمز می‌سازد و مراحل
+# جانبی (مثل پاک‌سازی تاریخ صفر) به دیتابیس راه نمی‌برند — شکست نسخهٔ ۶.۱۵.
+$dotenvPath = Join-Path $InstallDir ".env"
+if (Test-Path $dotenvPath) {
+  $rawEnv = Get-Content $dotenvPath -Raw -ErrorAction SilentlyContinue
+  if ($rawEnv) {
+    $mEnv = [regex]::Match($rawEnv, 'DATABASE_URL\s*=\s*"?([^"\r\n]+)"?')
+    if ($mEnv.Success -and $mEnv.Groups[1].Value -match '^(mysql|mariadb)://([^@/]+)@([^/:?#]+)(?::(\d+))?/([^/?#\s]+)') {
+      try {
+        $uParts = ($mEnv.Groups[2].Value -split ':', 2)
+        if (-not $PSBoundParameters.ContainsKey('MysqlUser') -and $uParts[0]) { $MysqlUser = [System.Uri]::UnescapeDataString($uParts[0]) }
+        if (-not $PSBoundParameters.ContainsKey('MysqlPassword') -and $uParts.Length -gt 1) { $MysqlPassword = [System.Uri]::UnescapeDataString($uParts[1]) }
+        if (-not $PSBoundParameters.ContainsKey('MysqlHost')) { $MysqlHost = $mEnv.Groups[3].Value }
+        if (-not $PSBoundParameters.ContainsKey('MysqlPort') -and $mEnv.Groups[4].Value) { $MysqlPort = [int]$mEnv.Groups[4].Value }
+        if (-not $PSBoundParameters.ContainsKey('MysqlDatabase')) { $MysqlDatabase = $mEnv.Groups[5].Value }
+      } catch {}
+    }
+  }
+}
 
 function Write-Step { param($m) Write-Host ""; Write-Host "▶ $m" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "  ✔ $m" -ForegroundColor Green }
@@ -235,6 +262,19 @@ PORT="$AppPort"
   if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null; Write-Ok "پوشهٔ داده ساخته شد: $DataDir" }
 }
 
+# DATABASE_URL واقعیِ .env (شامل رمز عبور صحیحِ نصب قبلی) — فقط اگر mysql/mariadb باشد
+function Get-EnvDatabaseUrl {
+  $envPath = Join-Path $InstallDir ".env"
+  if (-not (Test-Path $envPath)) { return $null }
+  $content = Get-Content $envPath -Raw -ErrorAction SilentlyContinue
+  if (-not $content) { return $null }
+  $m = [regex]::Match($content, 'DATABASE_URL\s*=\s*"?([^"\r\n]+)"?')
+  if (-not $m.Success) { return $null }
+  $url = $m.Groups[1].Value.Trim()
+  if ($url -match '^(mysql|mariadb)://') { return $url }
+  return $null
+}
+
 # آیا فایل .env موجود با موتور درخواستی سازگار است؟
 function Test-EnvMatches {
   $envPath = Join-Path $InstallDir ".env"
@@ -278,7 +318,11 @@ function Invoke-ZeroDateFix {
   try {
     $fixScript = "prisma/fix-zero-dates.mjs"
     if (-not (Test-Path $fixScript)) { return }
-    Invoke-Native { node $fixScript --mysql "$(Build-MysqlUrl)" 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    # اولویت با DATABASE_URL واقعیِ .env است (رمز عبور صحیحِ نصب قبلی)؛
+    # Build-MysqlUrl بدون -MysqlPassword آدرس بی‌رمز می‌سازد و اتصال می‌شکند
+    $fixUrl = Get-EnvDatabaseUrl
+    if (-not $fixUrl) { $fixUrl = Build-MysqlUrl }
+    Invoke-Native { node $fixScript --mysql "$fixUrl" 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
     if ($LASTEXITCODE -ne 0) {
       Write-Warn2 "پاک‌سازی تاریخ‌های نامعتبر ناموفق بود — ادامه می‌دهیم؛ اگر دادهٔ خرابی مانده باشد prisma db push خودش خطا می‌دهد"
     }
@@ -302,7 +346,17 @@ function Invoke-MysqlSchemaSync {
     # client تولیدی نهایی باید از اسکیمای MySQL باشد
     Invoke-Native { npx prisma generate --schema prisma/schema.mysql.prisma 2>&1 | Out-Null }
     if ($LASTEXITCODE -ne 0) { Write-Fail "prisma generate (mysql) ناموفق بود" }
-    Invoke-Native { npx prisma db push --schema prisma/schema.mysql.prisma --accept-data-loss 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    # خروجی push نگه داشته می‌شود تا در صورت شکست، علت دقیق قابل تشخیص باشد
+    $script:PushOut = ""
+    Invoke-Native { $script:PushOut = (npx prisma db push --schema prisma/schema.mysql.prisma --accept-data-loss 2>&1 | Out-String) }
+    if ($script:PushOut) { $script:PushOut.Trim() -split '\r?\n' | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    if ($LASTEXITCODE -ne 0 -and $script:PushOut -match 'Incorrect datetime value') {
+      # تاریخ صفرِ جایی از قلم افتاده — پاک‌سازی مجدد و یک تلاش دیگر قبل از تسلیم
+      Write-Warn2 "هنوز تاریخ صفر legacy در دیتابیس هست — پاک‌سازی مجدد و تلاش دوم…"
+      Invoke-ZeroDateFix
+      Write-Step "تلاش دوم — prisma db push"
+      Invoke-Native { npx prisma db push --schema prisma/schema.mysql.prisma --accept-data-loss 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    }
     if ($LASTEXITCODE -ne 0) {
       if ($AllowReset) {
         Write-Warn2 "ساختار فعلی MySQL با اسکیمای جدید سازگار نیست (ناسازگاری کلیدهای خارجی/یکتای قدیمی)"
@@ -566,7 +620,7 @@ switch ($Mode) {
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۶.۱۵" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۶.۱۶" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {

@@ -1,6 +1,6 @@
 {
   "name": "rahe-zendegi",
-  "version": "6.13.0",
+  "version": "6.16.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -15,7 +15,8 @@
     "db:push:mysql": "prisma db push --schema prisma/schema.mysql.prisma --accept-data-loss",
     "db:import:mysql": "tsx prisma/import-sqlite-to-mysql.mts",
     "seed": "tsx prisma/seed.ts",
-    "seed:admin": "tsx prisma/seed-admin.mts"
+    "seed:admin": "tsx prisma/seed-admin.mts",
+    "postinstall": "node prisma/fix-zero-dates-postinstall.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
