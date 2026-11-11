@@ -185,9 +185,13 @@ export function IranMap({
 
   return (
     <div className={cn("relative w-full select-none", className)} dir="rtl">
+      {/* قابِ هم‌مرز با SVG — درصدِ موقعیت پین‌ها باید نسبت به خودِ نقشه باشد
+          نه کادر بیرونی؛ SVG با max-w وسطِ کادر است و روی نمایشگرهای عریض
+          اگر درصد نسبت به کادرِ پدر حساب شود، پین‌ها از نقشه بیرون می‌زنند */}
+      <div className="relative mx-auto w-full max-w-[560px]">
       <svg
         viewBox={`0 0 ${IRAN_VIEWBOX.w} ${IRAN_VIEWBOX.h}`}
-        className="mx-auto block h-auto w-full max-w-[560px]"
+        className="block h-auto w-full"
         role="img"
         aria-label="نقشهٔ ایران — روند مشاوره به تفکیک استان"
       >
@@ -367,6 +371,9 @@ export function IranMap({
           </div>
         );
       })()}
+
+      </div>
+      {/* پایان قابِ هم‌مرز با SVG */}
 
       {/* راهنما */}
       <div className="mt-2 flex justify-center">
