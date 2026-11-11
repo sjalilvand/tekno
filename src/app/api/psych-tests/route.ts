@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { guardAction, guardAdmin, ok, fail } from "@/lib/server";
 import psychTestsJson from "@/data/psych-tests.json";
 import type { PsychTestJson } from "@/lib/psych";
-import { ensurePsychTests } from "@/lib/banks";
+import { ensurePsychTests, bankErrorSummary } from "@/lib/banks";
 
 /** فهرست آزمون‌های روان‌شناختی — بانک واردشده از مخزن special-spoon (نسخهٔ ۶.۱۲) */
 export async function GET(req: NextRequest) {
@@ -11,7 +11,13 @@ export async function GET(req: NextRequest) {
   if (g.error) return g.error;
 
   // اگر بانک خالی باشد، ۴۰ آزمون استاندارد خودکار بارگذاری می‌شود (نسخهٔ ۶.۱۳)
-  await ensurePsychTests().catch(() => {});
+  // نسخهٔ ۶.۱۴ — خطای درون‌ریزی دیگر بی‌صدا نیست؛ در پاسخ و لاگ گزارش می‌شود
+  const bank = await ensurePsychTests().catch((e: unknown) => ({
+    imported: 0, updated: 0, total: 0, skipped: false,
+    errors: [e instanceof Error ? e.message.slice(0, 200) : "خطای نامشخص درون‌ریزی"],
+  }));
+  const bankError = bankErrorSummary(bank);
+  if (bankError) console.error("[psych-tests] خطای درون‌ریزی خودکار:", bankError);
 
   const tests = await db.psychTest.findMany({
     where: g.acc.isAdmin ? {} : { isActive: true },
@@ -30,7 +36,7 @@ export async function GET(req: NextRequest) {
     };
   });
   const topics = [...new Set(items.map((i) => i.topic).filter(Boolean))];
-  return ok({ items, topics, total: items.length });
+  return ok({ items, topics, total: items.length, bankError });
 }
 
 /** عملیات مدیر: درون‌ریزی بانک آزمون‌ها و فعال/غیرفعال‌سازی */

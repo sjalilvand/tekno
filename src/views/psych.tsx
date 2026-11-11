@@ -267,7 +267,7 @@ export function PsychView() {
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [expandedAttempt, setExpandedAttempt] = React.useState<number | null>(null);
 
-  const list = useQuery<{ items: TestItem[]; topics: string[]; total: number }>(
+  const list = useQuery<{ items: TestItem[]; topics: string[]; total: number; bankError?: string | null }>(
     () => api(`/api/psych-tests?q=${encodeURIComponent(q)}`), [q]
   );
   const attempts = useQuery<{ items: AttemptRow[]; total: number }>(() => api("/api/psych-attempts?pageSize=50"), []);
@@ -305,6 +305,9 @@ export function PsychView() {
   const items = (list.data?.items ?? []).filter((i) => !topic || i.topic === topic);
   const totalAttempts = attempts.data?.total ?? 0;
   const totalQuestions = (list.data?.items ?? []).reduce((s, i) => s + i.questionsCount, 0);
+
+  // نسخهٔ ۶.۱۴ — اگر درون‌ریزی خودکار بانک شکست خورده باشد، دیگر بی‌صدا نمی‌ماند
+  const bankError = list.data?.bankError ?? null;
 
   const attemptColumns: Column<AttemptRow>[] = [
     {
@@ -390,6 +393,12 @@ export function PsychView() {
               </button>
             ))}
           </div>
+
+          {bankError && (
+            <div className="rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-[11.5px] font-bold leading-6 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+              خطا در بارگذاری خودکار بانک آزمون‌ها: {bankError}
+            </div>
+          )}
 
           {list.loading ? (
             <LoadingView />

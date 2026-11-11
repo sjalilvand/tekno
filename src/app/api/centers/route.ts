@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, guardAdmin, ok, fail, params } from "@/lib/server";
 import roseClinicsJson from "@/data/rose-clinics.json";
-import { ensureRoseClinics } from "@/lib/banks";
+import { ensureRoseClinics, bankErrorSummary } from "@/lib/banks";
 import type { Prisma } from "@prisma/client";
 
 type RoseClinic = {
@@ -97,7 +97,12 @@ export async function GET(req: NextRequest) {
   const { q, provinceId, page, pageSize } = params(req);
 
   // بارگذاری خودکار مراکز رز اگر هنوز مختصات نقشه نداشته باشند (نسخهٔ ۶.۱۳)
-  await ensureRoseClinics().catch(() => {});
+  const bank = await ensureRoseClinics().catch((e: unknown) => ({
+    imported: 0, updated: 0, total: 0, skipped: false,
+    errors: [e instanceof Error ? e.message.slice(0, 200) : "خطای نامشخص درون‌ریزی"],
+  }));
+  const bankError = bankErrorSummary(bank);
+  if (bankError) console.error("[centers] خطای درون‌ریزی خودکار:", bankError);
 
   const where: Prisma.CenterWhereInput = {};
   if (q) where.title = { contains: q };
@@ -113,5 +118,5 @@ export async function GET(req: NextRequest) {
       take: pageSize,
     }),
   ]);
-  return ok({ total, page, totalPages: Math.ceil(total / pageSize), centers });
+  return ok({ total, page, totalPages: Math.ceil(total / pageSize), centers, bankError });
 }

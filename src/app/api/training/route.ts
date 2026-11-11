@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { guardAction, guardAdmin, ok, fail, params } from "@/lib/server";
 import trainingJson from "@/data/training-items.json";
-import { ensureTrainingItems } from "@/lib/banks";
+import { ensureTrainingItems, bankErrorSummary } from "@/lib/banks";
 
 type ExamQuestion = { prompt: string; options: string[]; correctIndex: number };
 
@@ -12,7 +12,13 @@ export async function GET(req: NextRequest) {
   if (g.error) return g.error;
 
   // اگر بانک آموزش خالی باشد، محتوای آکادمی رز خودکار بارگذاری می‌شود (نسخهٔ ۶.۱۳)
-  await ensureTrainingItems().catch(() => {});
+  // نسخهٔ ۶.۱۴ — خطای درون‌ریزی دیگر بی‌صدا نیست
+  const bank = await ensureTrainingItems().catch((e: unknown) => ({
+    imported: 0, updated: 0, total: 0, skipped: false,
+    errors: [e instanceof Error ? e.message.slice(0, 200) : "خطای نامشخص درون‌ریزی"],
+  }));
+  const bankError = bankErrorSummary(bank);
+  if (bankError) console.error("[training] خطای درون‌ریزی خودکار:", bankError);
   const { q } = params(req);
   const allParam = req.nextUrl.searchParams.get("all") === "1";
 
@@ -38,6 +44,7 @@ export async function GET(req: NextRequest) {
         status: it.status, attemptsCount: it._count.attempts, createdAt: it.createdAt,
       };
     }),
+    bankError,
   });
 }
 

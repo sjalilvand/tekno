@@ -15,7 +15,13 @@ import type { PsychTestJson } from "@/lib/psych";
  * همهٔ توابع idempotent هستند و چندبار فراخوانی مشکلی ندارد.
  */
 
-type ImportStat = { imported: number; updated: number; total: number; skipped: boolean };
+type ImportStat = { imported: number; updated: number; total: number; skipped: boolean; errors?: string[] };
+
+/** پیام خطای خوانا برای لاگ و UI — دیگر هیچ شکستی بی‌صدا نیست (نسخهٔ ۶.۱۴) */
+export function bankErrorSummary(stat: ImportStat): string | null {
+  if (!stat.errors?.length) return null;
+  return stat.errors.slice(0, 3).join(" | ");
+}
 
 async function logIt(category: string, description: string) {
   await db.log
@@ -26,9 +32,14 @@ async function logIt(category: string, description: string) {
 // ---------------- بانک آزمون‌های روان‌شناختی ----------------
 export async function ensurePsychTests(): Promise<ImportStat> {
   const count = await db.psychTest.count();
-  if (count > 0) return { imported: 0, updated: 0, total: count, skipped: true };
+  // نسخهٔ ۶.۱۴ — اگر کمتر از بانک کامل وارد شده باشد (درون‌ریزی نیمه‌کاره) ترمیم می‌شود؛
+  // همهٔ عملیات upsert هستند و چندبار اجرا مشکلی ندارد.
+  if (count >= (psychTestsJson as unknown[]).length) {
+    return { imported: 0, updated: 0, total: count, skipped: true };
+  }
 
   let imported = 0;
+  const errors: string[] = [];
   for (const t of psychTestsJson as unknown as PsychTestJson[]) {
     const data = {
       slug: t.slug, title: t.title, code: t.code ?? null, topic: t.topic ?? "عمومی",
@@ -39,18 +50,31 @@ export async function ensurePsychTests(): Promise<ImportStat> {
       scales: t.scales ? JSON.stringify(t.scales) : null,
       isActive: true,
     };
-    const existing = await db.psychTest.findUnique({ where: { slug: t.slug } });
-    if (existing) await db.psychTest.update({ where: { id: existing.id }, data });
-    else { await db.psychTest.create({ data }); imported++; }
+    try {
+      const existing = await db.psychTest.findUnique({ where: { slug: t.slug } });
+      if (existing) await db.psychTest.update({ where: { id: existing.id }, data });
+      else { await db.psychTest.create({ data }); imported++; }
+    } catch (e) {
+      // یک آزمون خراب نباید بقیهٔ بانک را از کار بیندازد — خطا ثبت و گزارش می‌شود (نسخهٔ ۶.۱۴)
+      errors.push(`${t.slug}: ${e instanceof Error ? e.message.slice(0, 160) : "خطای نامشخص"}`);
+      console.error(`[banks] خطای درون‌ریزی آزمون ${t.slug}:`, e);
+    }
   }
   await logIt("آزمون‌ها", `درون‌ریزی خودکار بانک آزمون‌های روان‌شناختی — ${imported} آزمون`);
-  return { imported, updated: 0, total: (psychTestsJson as unknown[]).length, skipped: false };
+  return { imported, updated: 0, total: (psychTestsJson as unknown[]).length, skipped: false, errors: errors.length ? errors : undefined };
 }
 
 // ---------------- آکادمی رز — محتوای آموزشی ----------------
 export async function ensureTrainingItems(): Promise<ImportStat> {
+  const rows0: { slug: string }[] = [];
+  for (const c of trainingJson.contents ?? []) rows0.push(c as any);
+  for (const c of trainingJson.courses ?? []) rows0.push(c as any);
+  for (const c of trainingJson.exams ?? []) rows0.push(c as any);
   const count = await db.trainingItem.count();
-  if (count > 0) return { imported: 0, updated: 0, total: count, skipped: true };
+  // نسخهٔ ۶.۱۴ — ترمیم درون‌ریزی نیمه‌کاره (همهٔ عملیات upsert و idempotent)
+  if (count >= rows0.length) {
+    return { imported: 0, updated: 0, total: count, skipped: true };
+  }
 
   const rows: { kind: string; slug: string; title: string; summary?: string; body?: string; topic?: string; tag?: string; price?: number; capacity?: number; sessions?: unknown[]; questions?: unknown[]; passPercent?: number; durationMinutes?: number }[] = [];
   for (const c of trainingJson.contents ?? []) rows.push({ kind: "content", ...c });
@@ -58,6 +82,7 @@ export async function ensureTrainingItems(): Promise<ImportStat> {
   for (const c of trainingJson.exams ?? []) rows.push({ kind: "exam", ...c });
 
   let imported = 0;
+  const errors: string[] = [];
   for (const r of rows) {
     const data = {
       kind: r.kind, slug: r.slug, title: r.title, summary: r.summary ?? null,
@@ -68,12 +93,17 @@ export async function ensureTrainingItems(): Promise<ImportStat> {
       passPercent: r.passPercent ?? 60, durationMinutes: r.durationMinutes ?? 20,
       status: "published",
     };
-    const existing = await db.trainingItem.findUnique({ where: { slug: r.slug } });
-    if (existing) await db.trainingItem.update({ where: { id: existing.id }, data });
-    else { await db.trainingItem.create({ data }); imported++; }
+    try {
+      const existing = await db.trainingItem.findUnique({ where: { slug: r.slug } });
+      if (existing) await db.trainingItem.update({ where: { id: existing.id }, data });
+      else { await db.trainingItem.create({ data }); imported++; }
+    } catch (e) {
+      errors.push(`${r.slug}: ${e instanceof Error ? e.message.slice(0, 160) : "خطای نامشخص"}`);
+      console.error(`[banks] خطای درون‌ریزی آموزش ${r.slug}:`, e);
+    }
   }
-  await logIt("آموزش", `درون‌ریزی خودکار محتوای آموزشی آکادمی رز — ${imported} مورد`);
-  return { imported, updated: 0, total: rows.length, skipped: false };
+  await logIt("آموزش", `درون‌ریزی خودکار محتوای آموزشی آکادمی رز — ${imported} مورد${errors.length ? ` — ${errors.length} خطا` : ""}`);
+  return { imported, updated: 0, total: rows.length, skipped: false, errors: errors.length ? errors : undefined };
 }
 
 // ---------------- اطلس مراکز رز — ۳۱ کلینیک از نقشهٔ ایران ----------------
@@ -86,9 +116,12 @@ type RoseClinic = {
 };
 
 export async function ensureRoseClinics(): Promise<ImportStat> {
-  // اگر هیچ مرکزی مختصات جغرافیایی ندارد یعنی دادهٔ نقشه هنوز وارد نشده
+  // تعداد مراکزی که مختصات جغرافیایی دارند — اگر از کلینیک‌های رز (۳۱) بیشتر باشد، وارد شده است
   const geoCount = await db.center.count({ where: { latitude: { not: null } } });
-  if (geoCount > 0) return { imported: 0, updated: 0, total: geoCount, skipped: true };
+  // نسخهٔ ۶.۱۴ — درون‌ریزی نیمه‌کاره هم ترمیم می‌شود (upsert idempotent)
+  if (geoCount >= (roseClinicsJson as unknown[]).length) {
+    return { imported: 0, updated: 0, total: geoCount, skipped: true };
+  }
 
   let imported = 0, updated = 0;
   const errors: string[] = [];
@@ -135,6 +168,6 @@ export async function ensureRoseClinics(): Promise<ImportStat> {
     }
   }
 
-  await logIt("مراکز", `درون‌ریزی خودکار مراکز رز از نقشهٔ ایران — ${imported} جدید، ${updated} به‌روزرسانی`);
-  return { imported, updated, total: (roseClinicsJson as unknown[]).length, skipped: false };
+  await logIt("مراکز", `درون‌ریزی خودکار مراکز رز از نقشهٔ ایران — ${imported} جدید، ${updated} به‌روزرسانی${errors.length ? ` — ${errors.length} خطا` : ""}`);
+  return { imported, updated, total: (roseClinicsJson as unknown[]).length, skipped: false, errors: errors.length ? errors : undefined };
 }

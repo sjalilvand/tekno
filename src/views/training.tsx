@@ -117,11 +117,13 @@ export function TrainingView() {
   const [examResult, setExamResult] = React.useState<{ percent: number; correct: number; total: number; passed: boolean; passPercent: number } | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
 
-  const list = useQuery<{ items: TrainingItem[] }>(() => api(`/api/training${q ? `?q=${encodeURIComponent(q)}` : ""}`), []);
+  const list = useQuery<{ items: TrainingItem[]; bankError?: string | null }>(() => api(`/api/training${q ? `?q=${encodeURIComponent(q)}` : ""}`), []);
 
   const contents = (list.data?.items ?? []).filter((i) => i.kind === "content");
   const courses = (list.data?.items ?? []).filter((i) => i.kind === "course");
   const exams = (list.data?.items ?? []).filter((i) => i.kind === "exam");
+  // نسخهٔ ۶.۱۴ — خطای درون‌ریزی خودکار بی‌صدا نمی‌ماند
+  const bankError = list.data?.bankError ?? null;
 
   const openItem = async (slug: string) => {
     setOpenSlug(slug);
@@ -191,7 +193,7 @@ export function TrainingView() {
 
       <div className="grid grid-cols-3 gap-3">
         <StatCard title="محتوای آموزشی" value={faNum(contents.length)} icon={<BookOpen className="h-5 w-5" />} tone="cyan" />
-        <StatCard title="دوره‌ها" value={faNum(courses.length)} icon={<Presentation className="h-5 w-5" />} tone="v" />
+        <StatCard title="دوره‌ها" value={faNum(courses.length)} icon={<Presentation className="h-5 w-5" />} tone="emerald" />
         <StatCard title="آزمون‌های آموزشی" value={faNum(exams.length)} icon={<FileQuestion className="h-5 w-5" />} tone="amber" />
       </div>
 
@@ -205,6 +207,12 @@ export function TrainingView() {
           بارگذاری/به‌روزرسانی محتوای آموزشی
         </Button>
       </div>
+
+      {bankError && (
+        <div className="rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-[11.5px] font-bold leading-6 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+          خطا در بارگذاری خودکار محتوای آموزشی: {bankError}
+        </div>
+      )}
 
       {list.loading ? (
         <LoadingView />

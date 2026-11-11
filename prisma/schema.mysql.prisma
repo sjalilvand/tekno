@@ -24,7 +24,7 @@ datasource db {
 
 model Province {
   id         Int     @id
-  title      String
+  title      String @db.Text
   apiCode    Int?    @map("API")
   detailCode Int?
   cities     City[]
@@ -38,7 +38,7 @@ model Province {
 model City {
   id         Int      @id
   provinceId Int
-  title      String
+  title      String @db.Text
   apiCode    Int?     @map("APICode")
   province   Province @relation(fields: [provinceId], references: [id])
   centers    Center[]
@@ -48,7 +48,7 @@ model City {
 
 model Education {
   id    Int    @id
-  name  String
+  name  String @db.Text
   users User[]
 
   @@map("Education")
@@ -56,7 +56,7 @@ model Education {
 
 model Marriage {
   id    Int    @id
-  name  String
+  name  String @db.Text
   users User[]
 
   @@map("Marriage")
@@ -64,15 +64,15 @@ model Marriage {
 
 model Religion {
   id   Int    @id
-  name String
+  name String @db.Text
 
   @@map("Religion")
 }
 
 model Service {
   id     Int     @id
-  name   String
-  short  String
+  name   String @db.Text
+  short  String @db.Text
   sohaId Int
   weight Float   @default(1)
   events Event[]
@@ -87,12 +87,12 @@ model Service {
 
 model Role {
   id          Int        @id
-  title       String
-  codeName    String
-  permissions String? // JSON — کلیدهای دسترسی؛ خالی/null یعنی دسترسی کامل (سازگاری با گذشته)
+  title       String @db.Text
+  codeName    String @db.Text
+  permissions String? @db.Text   // JSON — کلیدهای دسترسی؛ خالی/null یعنی دسترسی کامل (سازگاری با گذشته)
   // دامنهٔ داده (نسخهٔ ۶.۱۰) — چه نوع داده‌ای را ببیند؟
   // null = خودکار (مطابق گذشته: مشاور فقط خودش، بقیه همه) | all | province | center | self
-  dataScope   String?
+  dataScope   String? @db.Text
   users       UserRole[]
 
   @@map("Roles")
@@ -102,25 +102,25 @@ model User {
   id             Int       @id @default(autoincrement())
   nid            BigInt    @unique
   username       String    @unique
-  passwordHash   String
-  name           String
-  family         String
-  father         String?
+  passwordHash   String @db.Text
+  name           String @db.Text
+  family         String @db.Text
+  father         String? @db.Text
   gender         String?   // مرد / زن
   birthday       DateTime?
   marriageId     Int?
   marriage       Marriage? @relation(fields: [marriageId], references: [id])
   educationId    Int?
   education      Education? @relation(fields: [educationId], references: [id])
-  religion       String?
+  religion       String? @db.Text
   mobile         BigInt
   mobile2        BigInt?
   phone          Int?
-  email          String?
+  email          String? @db.Text
   provinceId     Int?
   province       Province? @relation(fields: [provinceId], references: [id])
   cityId         Int?
-  address        String?
+  address        String? @db.Text
   zipCode        BigInt?
   signupDate     DateTime  @default(now())
   lastLogin      DateTime?
@@ -128,9 +128,9 @@ model User {
   confirm        Int?      @default(0)
   blocked        Boolean   @default(false)
   checked        Boolean   @default(false)
-  avatarColor    String?   // رنگ آواتار تولیدشده
+  avatarColor    String? @db.Text   // رنگ آواتار تولیدشده
   consultantLevel Int?     // سطح ۱ تا ۵ برای مشاوران
-  bio            String?
+  bio            String? @db.Text
 
   roles          UserRole[]
   psychAttempts  PsychTestAttempt[] @relation("PsychAttemptUser")
@@ -201,8 +201,8 @@ model Session {
   user     User     @relation(fields: [userId], references: [id])
   // یونیک حذف شد — دادهٔ legacy توکن تکراری/خالی دارد (انتقال SQLite→MySQL)
   token    String
-  ip       String?
-  browser  String?
+  ip       String? @db.Text
+  browser  String? @db.Text
   dateTime DateTime @default(now())
 
   @@index([token])
@@ -213,10 +213,10 @@ model Log {
   id          Int      @id @default(autoincrement())
   userId      Int?
   user        User?    @relation(fields: [userId], references: [id])
-  category    String
-  description String?
+  category    String @db.Text
+  description String? @db.Text
   level       Int      @default(1)
-  ip          String?
+  ip          String? @db.Text
   timestamp   DateTime @default(now())
 
   @@index([timestamp])
@@ -229,31 +229,31 @@ model Log {
 
 model CenterCategory {
   id      Int      @id
-  title   String
+  title   String @db.Text
   centers Center[]
 }
 
 model Center {
   id          Int            @id
-  title       String
+  title       String @db.Text
   isEnabled   Boolean        @default(true)
-  address     String?
-  tel         String?
+  address     String? @db.Text
+  tel         String? @db.Text
   catId       Int?
   category    CenterCategory? @relation(fields: [catId], references: [id])
   cityId      Int
   city        City           @relation(fields: [cityId], references: [id])
-  cityTitle   String
+  cityTitle   String @db.Text
   provinceId  Int
   province    Province       @relation(fields: [provinceId], references: [id])
-  provinceTitle String
-  postalCode  String?
-  managerName String?
-  managerPhone String?
-  workingHours String?
+  provinceTitle String @db.Text
+  postalCode  String? @db.Text
+  managerName String? @db.Text
+  managerPhone String? @db.Text
+  workingHours String? @db.Text
   latitude    Float?
   longitude   Float?
-  mapUrl      String?
+  mapUrl      String? @db.Text
   events      Event[]
   bankAccounts CenterBankAccount[]
   equipments  CenterEquipment[]
@@ -268,17 +268,17 @@ model CenterBankAccount {
   id       Int    @id @default(autoincrement())
   centerId Int
   center   Center @relation(fields: [centerId], references: [id])
-  bankName String?
-  sheba    String?
-  accountNo String?
-  ownerName String?
+  bankName String? @db.Text
+  sheba    String? @db.Text
+  accountNo String? @db.Text
+  ownerName String? @db.Text
 
   @@map("CenterBankAccount")
 }
 
 model EquipmentItem {
   id    Int    @id
-  title String
+  title String @db.Text
 }
 
 model CenterEquipment {
@@ -297,9 +297,9 @@ model CenterEquipment {
 
 model CorporateCustomer {
   id       Int                 @id @default(autoincrement())
-  title    String
+  title    String @db.Text
   discount Int                 @default(0)
-  phone    String?
+  phone    String? @db.Text
   contracts CorporateContract[]
 
   @@map("CorporateCustomers")
@@ -350,7 +350,7 @@ model CorporateContractCoupon {
 
 model Budget {
   id           Int       @id @default(autoincrement())
-  title        String
+  title        String @db.Text
   kind         String    @default("فردی") // فردی / گروهی / شغلی
   amount       Float     @default(0)
   remained     Float     @default(0)
@@ -435,7 +435,7 @@ model Event {
   acceptor       User?     @relation("EventAcceptor", fields: [acceptorId], references: [id])
   acceptorFee    Int       @default(0)
   secretaryFee   Int       @default(0)
-  acceptorCodeName String?
+  acceptorCodeName String? @db.Text
   acceptorLevel  Int       @default(1)
   supervisorFee  Int       @default(0)
   centerFee      Int       @default(0)
@@ -460,9 +460,9 @@ model Event {
   // در انتظار تایید نظارت حرفه‌ای | در انتظار تایید ناظر استان | تایید نهایی | رد شده | ناتمام
   rejectedByUserId Int?
   rejectedAt       DateTime?
-  rejectedComment  String?
-  topic            String?   // موضوع جلسه (EventPersonal)
-  description      String?   // شرح جلسه (EventPersonal)
+  rejectedComment  String? @db.Text
+  topic            String? @db.Text   // موضوع جلسه (EventPersonal)
+  description      String? @db.Text   // شرح جلسه (EventPersonal)
   isGroup          Boolean   @default(false)
   groupEventId     Int?
 
@@ -491,7 +491,7 @@ model EventComment {
   eventId       Int
   event         Event    @relation(fields: [eventId], references: [id])
   consultantNID BigInt
-  comment       String?
+  comment       String? @db.Text
   dateTime      DateTime @default(now())
 
   @@index([eventId])
@@ -517,35 +517,35 @@ model EventPsychology {
   event                Event    @relation(fields: [eventId], references: [id])
   userId               Int?
   acceptorId           Int?
-  job                  String?
-  ethnicity            String?
-  religion             String?
-  religiousBelief      String?
+  job                  String? @db.Text
+  ethnicity            String? @db.Text
+  religion             String? @db.Text
+  religiousBelief      String? @db.Text
   children             Int?
-  residenceQuality     String?
-  spouseInfo           String?
-  problemStart         String?
-  problemDuration      String?
-  clinicalObservation  String?
-  appearance           String?
-  psychomotorStatus    String?
-  interviewAttitude    String?
-  mood                 String?
-  affect               String?
-  speech               String?
-  perception           String?
-  thoughtContent       String?
-  thoughtProcess       String?
-  consciousness        String?
-  orientation          String?
-  memory               String?
-  concentration        String?
-  intelligence         String?
-  judgment             String?
-  insight              String?
-  medicalHistory       String?
-  familyHistory        String?
-  familyRelationships  String?
+  residenceQuality     String? @db.Text
+  spouseInfo           String? @db.Text
+  problemStart         String? @db.Text
+  problemDuration      String? @db.Text
+  clinicalObservation  String? @db.Text
+  appearance           String? @db.Text
+  psychomotorStatus    String? @db.Text
+  interviewAttitude    String? @db.Text
+  mood                 String? @db.Text
+  affect               String? @db.Text
+  speech               String? @db.Text
+  perception           String? @db.Text
+  thoughtContent       String? @db.Text
+  thoughtProcess       String? @db.Text
+  consciousness        String? @db.Text
+  orientation          String? @db.Text
+  memory               String? @db.Text
+  concentration        String? @db.Text
+  intelligence         String? @db.Text
+  judgment             String? @db.Text
+  insight              String? @db.Text
+  medicalHistory       String? @db.Text
+  familyHistory        String? @db.Text
+  familyRelationships  String? @db.Text
   dateTime             DateTime @default(now())
 
   @@map("EventPsychology")
@@ -555,11 +555,11 @@ model EventNeuroFeedback {
   id             Int      @id @default(autoincrement())
   eventId        Int
   event          Event    @relation(fields: [eventId], references: [id])
-  protocol       String?
-  target         String?
-  visible        String?
-  action         String?
-  changed        String?
+  protocol       String? @db.Text
+  target         String? @db.Text
+  visible        String? @db.Text
+  action         String? @db.Text
+  changed        String? @db.Text
   ezterabOld     Int?
   ezterabNew     Int?
   afsorOld       Int?
@@ -570,7 +570,7 @@ model EventNeuroFeedback {
   focusNew       Int?
   energyOld      Int?
   energyNew      Int?
-  other          String?
+  other          String? @db.Text
   dateTime       DateTime @default(now())
 
   // یونیک حذف شد — در دادهٔ legacy چند فرم نوروفیدبک برای یک جلسه ثبت شده
@@ -583,7 +583,7 @@ model EventHeadMap {
   eventId     Int
   event       Event    @relation(fields: [eventId], references: [id])
   fileId      Int?
-  description String?
+  description String? @db.Text
   dateTime    DateTime @default(now())
 
   // یونیک حذف شد — در دادهٔ legacy چند نقشهٔ سر برای یک جلسه ثبت شده
@@ -595,9 +595,9 @@ model EventMedicine {
   id       Int    @id @default(autoincrement())
   eventId  Int
   event    Event  @relation(fields: [eventId], references: [id])
-  name     String
-  dosage   String?
-  duration String?
+  name     String @db.Text
+  dosage   String? @db.Text
+  duration String? @db.Text
 
   @@map("EventMedicine")
 }
@@ -607,7 +607,7 @@ model EventDisorder {
   eventId    Int
   event      Event  @relation(fields: [eventId], references: [id])
   disorderId Int
-  title      String
+  title      String @db.Text
 
   @@map("EventDisorders")
 }
@@ -617,7 +617,7 @@ model EventReferral {
   eventId       Int
   fromUserId    Int
   toUserId      Int
-  reason        String?
+  reason        String? @db.Text
   dateTime      DateTime @default(now())
 }
 
@@ -627,13 +627,13 @@ model EventReferral {
 
 model Group {
   id                  Int      @id @default(autoincrement())
-  title               String
+  title               String @db.Text
   corporateContractId Int?
   centerId            Int
   acceptorId          Int
   creatorId           Int?
-  tel                 String?
-  address             String?
+  tel                 String? @db.Text
+  address             String? @db.Text
   createDate          DateTime @default(now())
   members             GroupMember[]
   events              GroupEvent[]
@@ -658,13 +658,13 @@ model GroupEvent {
   id               Int       @id @default(autoincrement())
   groupId          Int
   group            Group     @relation(fields: [groupId], references: [id])
-  topic            String
-  description      String?
+  topic            String @db.Text
+  description      String? @db.Text
   startDate        DateTime?
   endDate          DateTime?
   sessionNumber    Int       @default(1)
   acceptorId       Int?
-  acceptorCodeName String?
+  acceptorCodeName String? @db.Text
   acceptorLevel    Int       @default(1)
   supervisorId     Int?
   centerAdminId    Int?
@@ -713,12 +713,12 @@ model Referr {
   id              Int      @id @default(autoincrement())
   refId           BigInt   @unique
   userId          Int
-  userName        String?
+  userName        String? @db.Text
   userNid         BigInt?
   userMobile      BigInt?
   serviceId       Int
   service         Service  @relation(fields: [serviceId], references: [id])
-  description     String?
+  description     String? @db.Text
   isReferr        Boolean  @default(false)
   provinceId      Int
   cityId          Int?
@@ -741,7 +741,7 @@ model ReferrFollowUp {
   referrId  Int
   referr    Referr   @relation(fields: [referrId], references: [id])
   userId    Int
-  comment   String
+  comment   String @db.Text
   createdAt DateTime @default(now())
 
   @@map("ReferrFollowUps")
@@ -750,8 +750,8 @@ model ReferrFollowUp {
 model ReferrRequest {
   id              Int      @id @default(autoincrement())
   userId          Int
-  userName        String?
-  description     String?
+  userName        String? @db.Text
+  description     String? @db.Text
   provinceId      Int
   cityId          Int?
   centerId        Int?
@@ -772,18 +772,18 @@ model EventsEms {
   eventId               Int
   event                 Event    @relation(fields: [eventId], references: [id])
   secretaryNID          BigInt?
-  emsType               String?  // JSON — انواع مورد حاد
-  suicidalFrom          String?  // JSON — عوامل خودکشی
-  psychiatricDisorders  String?  // JSON
-  socialFactors         String?  // JSON
-  protectiveFactors     String?  // JSON
-  suggestedActions      String?  // JSON
-  actionsTaken          String?
+  emsType               String? @db.Text   // JSON — انواع مورد حاد
+  suicidalFrom          String? @db.Text   // JSON — عوامل خودکشی
+  psychiatricDisorders  String? @db.Text   // JSON
+  socialFactors         String? @db.Text   // JSON
+  protectiveFactors     String? @db.Text   // JSON
+  suggestedActions      String? @db.Text   // JSON
+  actionsTaken          String? @db.Text
   financialAssistanceRequest Int  @default(0)
   dateTime              DateTime @default(now())
   hadPaymentAmount      BigInt   @default(0)
   hadPaymentStatus      String?  // بدون درخواست | در انتظار بررسی | تایید شده | پرداخت شده
-  hadPaymentDescription String?
+  hadPaymentDescription String? @db.Text
   confirmedByUserId     Int?
   severity              String   @default("متوسط") // کم | متوسط | بالا
   comments              EventEmsComment[]
@@ -800,7 +800,7 @@ model EventEmsComment {
   eventEmsId Int
   ems        EventsEms @relation(fields: [eventEmsId], references: [id])
   userId     Int?
-  comment    String
+  comment    String @db.Text
   date       DateTime @default(now())
 
   @@map("EventEmsComments")
@@ -814,13 +814,13 @@ model ConsultantEducation {
   id              Int      @id @default(autoincrement())
   userId          Int
   consultantNID   BigInt?
-  field           String?
-  orientation     String?
-  grade           String?
-  university      String?
-  graduationDate  String?
+  field           String? @db.Text
+  orientation     String? @db.Text
+  grade           String? @db.Text
+  university      String? @db.Text
+  graduationDate  String? @db.Text
   dateTime        DateTime @default(now())
-  file            String?
+  file            String? @db.Text
 
   @@map("ConsultantEducation")
 }
@@ -828,10 +828,10 @@ model ConsultantEducation {
 model ConsultantCourse {
   id            Int      @id @default(autoincrement())
   userId        Int
-  title         String
-  institute     String?
+  title         String @db.Text
+  institute     String? @db.Text
   hours         Int?
-  year          String?
+  year          String? @db.Text
   dateTime      DateTime @default(now())
 
   @@map("ConsultantCourses")
@@ -840,10 +840,10 @@ model ConsultantCourse {
 model ConsultantExperience {
   id         Int      @id @default(autoincrement())
   userId     Int
-  title      String
-  place      String?
-  fromYear   String?
-  toYear     String?
+  title      String @db.Text
+  place      String? @db.Text
+  fromYear   String? @db.Text
+  toYear     String? @db.Text
 
   @@map("ConsultantExperience")
 }
@@ -878,8 +878,8 @@ model Sms {
   receiverId  Int
   receiver    User     @relation("SmsReceiver", fields: [receiverId], references: [id])
   number      BigInt?
-  message     String
-  response    String?
+  message     String @db.Text
+  response    String? @db.Text
   efforts     Int      @default(0)
   status      String   @default("ارسال شده") // در صف | ارسال شده | ناموفق
   updateTime  DateTime @default(now())
@@ -896,10 +896,10 @@ model Message {
   fromUser          User     @relation("MsgFrom", fields: [fromUserId], references: [id])
   toUserId          Int?
   toUser            User?    @relation("MsgTo", fields: [toUserId], references: [id])
-  subject           String?
-  text              String?
+  subject           String? @db.Text
+  text              String? @db.Text
   fileId            Int?
-  targetRole        String?
+  targetRole        String? @db.Text
   targetProvinceId  Int?
   timestamp         DateTime @default(now())
   star              Boolean  @default(false)
@@ -911,8 +911,8 @@ model Message {
 model File {
   id             Int      @id @default(autoincrement())
   userNID        BigInt
-  name           String
-  location       String
+  name           String @db.Text
+  location       String @db.Text
   uploadDateTime DateTime @default(now())
 
   @@map("Files")
@@ -921,8 +921,8 @@ model File {
 model Notification {
   id        Int      @id @default(autoincrement())
   userId    Int?
-  title     String
-  body      String?
+  title     String @db.Text
+  body      String? @db.Text
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 
@@ -935,7 +935,7 @@ model Notification {
 
 model Setting {
   name   String  @id
-  value  String?
+  value  String? @db.MediumText
   group  String  @default("عمومی")
 
   @@map("Settings")
@@ -943,8 +943,8 @@ model Setting {
 
 model SpecialOccasion {
   id             Int      @id @default(autoincrement())
-  title          String
-  imagePath      String?
+  title          String @db.Text
+  imagePath      String? @db.Text
   displayDate    DateTime
   isActive       Boolean  @default(true)
   createdByUserId Int?
@@ -956,8 +956,8 @@ model SpecialOccasion {
 model UserTicket {
   id          Int      @id @default(autoincrement())
   userId      Int
-  subject     String
-  text        String?
+  subject     String @db.Text
+  text        String? @db.Text
   status      String   @default("باز") // باز | در حال بررسی | بسته
   priority    String   @default("متوسط")
   createdAt   DateTime @default(now())
@@ -969,15 +969,15 @@ model UserTicket {
 model Help {
   id       Int    @id @default(autoincrement())
   roleId   Int?
-  title    String
-  fileUrl  String?
+  title    String @db.Text
+  fileUrl  String? @db.Text
 
   @@map("Helps")
 }
 
 model ApiToken {
   id        Int      @id @default(autoincrement())
-  title     String
+  title     String @db.Text
   token     String   @unique
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -987,8 +987,8 @@ model ApiToken {
 
 model ApiReport {
   id         Int      @id @default(autoincrement())
-  type       String
-  data       String?
+  type       String @db.Text
+  data       String? @db.MediumText
   efforts    Int      @default(0)
   status     String   @default("موفق")
   createTime DateTime @default(now())
@@ -1008,8 +1008,8 @@ model SyncLog {
   direction  String   @default("IN") // IN (دریافت از سها) | OUT (ارسال به سها)
   status     String   @default("در حال اجرا") // در حال اجرا | موفق | ناموفق
   records    Int      @default(0)
-  cursor     String?  // نشانگر افزایشی — آخرین زمان/شناسه همگام‌سازی
-  message    String?  // خلاصه یا پیام خطا
+  cursor     String? @db.Text   // نشانگر افزایشی — آخرین زمان/شناسه همگام‌سازی
+  message    String? @db.Text   // خلاصه یا پیام خطا
   duration   Int?     // مدت اجرا (میلی‌ثانیه)
   createTime DateTime @default(now())
 
@@ -1028,9 +1028,9 @@ model SyncLog {
 model ChatMessage {
   id        Int      @id @default(autoincrement())
   userId    Int
-  role      String   // user | assistant
-  text      String
-  payload   String?  // JSON — نمودار / کارت‌ها / لینک‌های اکشن
+  role      String @db.Text   // user | assistant
+  text      String @db.Text
+  payload   String? @db.MediumText   // JSON — نمودار / کارت‌ها / لینک‌های اکشن
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
@@ -1043,9 +1043,9 @@ model ChatMessage {
 
 model FormDefinition {
   id          Int      @id @default(autoincrement())
-  title       String
-  desc        String?
-  fields      String   // JSON — [{key,label,type,required,options}]
+  title       String @db.Text
+  desc        String? @db.Text
+  fields      String @db.MediumText   // JSON — [{key,label,type,required,options}]
   isActive    Boolean  @default(true)
   createdBy   Int?
   createdAt   DateTime @default(now())
@@ -1060,7 +1060,7 @@ model FormSubmission {
   form        FormDefinition @relation(fields: [formId], references: [id])
   userId      Int?           // متقاضی مرتبط (اختیاری)
   eventId     Int?           // جلسهٔ مرتبط (اختیاری)
-  data        String         // JSON — مقادیر فیلدها
+  data        String @db.MediumText   // JSON — مقادیر فیلدها
   createdById Int?
   createdAt   DateTime       @default(now())
 
@@ -1077,10 +1077,10 @@ model FormSubmission {
 model ProcessDefinition {
   id        Int               @id @default(autoincrement())
   key       String            @unique
-  title     String
-  desc      String?
-  bpmnFile  String?           // فایل BPMN مرتبط در public/bpmn (اختیاری)
-  steps     String            // JSON — [{name, slaHours}]
+  title     String @db.Text
+  desc      String? @db.Text
+  bpmnFile  String? @db.Text   // فایل BPMN مرتبط در public/bpmn (اختیاری)
+  steps     String @db.Text   // JSON — [{name, slaHours}]
   isActive  Boolean           @default(true)
   createdAt DateTime          @default(now())
   instances ProcessInstance[]
@@ -1094,7 +1094,7 @@ model ProcessInstance {
   process     ProcessDefinition @relation(fields: [processId], references: [id])
   refType     String            @default("Event") // Event | User | GroupEvent
   refId       Int
-  title       String?           // برچسب نمایشی (نام متقاضی / کد پیگیری)
+  title       String? @db.Text   // برچسب نمایشی (نام متقاضی / کد پیگیری)
   currentStep Int               @default(0)
   status      String            @default("در جریان") // در جریان | تکمیل | متوقف
   startedAt   DateTime          @default(now())
@@ -1111,11 +1111,11 @@ model ProcessStepLog {
   instanceId  Int
   instance    ProcessInstance @relation(fields: [instanceId], references: [id])
   stepIdx     Int
-  name        String
+  name        String @db.Text
   enteredAt   DateTime        @default(now())
   exitedAt    DateTime?
   durationMin Int?
-  note        String?
+  note        String? @db.Text
 
   @@index([instanceId])
   @@map("ProcessStepLogs")
@@ -1128,10 +1128,10 @@ model ProcessStepLog {
 model ChecklistTemplate {
   id        Int            @id @default(autoincrement())
   key       String         @unique
-  title     String
-  desc      String?
+  title     String @db.Text
+  desc      String? @db.Text
   trigger   String         @default("manual") // new_client | acute | approval_stuck | manual
-  items     String         // JSON — [{title, autoRule}]
+  items     String @db.MediumText   // JSON — [{title, autoRule}]
   isActive  Boolean        @default(true)
   createdAt DateTime       @default(now())
   runs      ChecklistRun[]
@@ -1145,7 +1145,7 @@ model ChecklistRun {
   template    ChecklistTemplate @relation(fields: [templateId], references: [id])
   userId      Int?              // متقاضی مرتبط
   eventId     Int?              // جلسهٔ مرتبط
-  title       String?           // برچسب نمایشی
+  title       String? @db.Text   // برچسب نمایشی
   status      String            @default("در جریان") // در جریان | تکمیل
   createdAt   DateTime          @default(now())
   completedAt DateTime?
@@ -1160,8 +1160,8 @@ model ChecklistRunItem {
   id       Int          @id @default(autoincrement())
   runId    Int
   run      ChecklistRun @relation(fields: [runId], references: [id])
-  title    String
-  autoRule String?      // قاعدهٔ تیک خودکار
+  title    String @db.Text
+  autoRule String? @db.Text   // قاعدهٔ تیک خودکار
   done     Boolean      @default(false)
   auto     Boolean      @default(false)
   doneAt   DateTime?
@@ -1177,17 +1177,17 @@ model ChecklistRunItem {
 model WebService {
   id         Int       @id @default(autoincrement())
   slug       String    @unique // آدرس: /api/ws/<slug>
-  title      String
+  title      String @db.Text
   sourceType String    @default("table") // table | sql — سرویس جدولی یا پرس‌وجویی
-  sqlText    String?   // متن SELECT برای سرویس‌های پرس‌وجویی (استودیوی پرس‌وجو)
-  table      String // نام جدول مجاز از کاتالوگ
-  columns    String // JSON: ["id","name", ...] — خالی یعنی همهٔ ستون‌های مجاز
-  filters    String? // JSON: [{col,op,value}]
+  sqlText    String? @db.Text   // متن SELECT برای سرویس‌های پرس‌وجویی (استودیوی پرس‌وجو)
+  table      String @db.Text   // نام جدول مجاز از کاتالوگ
+  columns    String @db.MediumText   // JSON: ["id","name", ...] — خالی یعنی همهٔ ستون‌های مجاز
+  filters    String? @db.MediumText   // JSON: [{col,op,value}]
   format     String    @default("json") // json | xml | csv
   authType   String    @default("apikey") // none | apikey
-  apiKey     String?
+  apiKey     String? @db.Text
   rowLimit   Int       @default(1000)
-  orderBy    String?
+  orderBy    String? @db.Text
   isActive   Boolean   @default(true)
   callCount  Int       @default(0)
   lastCallAt DateTime?
@@ -1198,13 +1198,13 @@ model WebService {
 
 model ImportJob {
   id         Int       @id @default(autoincrement())
-  source     String // مسیر فایل پشتیبان روی سرور
+  source     String @db.Text   // مسیر فایل پشتیبان روی سرور
   mode       String    @default("append") // append (ادغام با به‌روزرسانی) | truncate (پاک و جایگزین)
   status     String    @default("queued") // queued | running | done | failed
   progress   Int       @default(0)
   tablesDone Int       @default(0)
   tablesAll  Int       @default(0)
-  log        String?
+  log        String? @db.Text
   byUserId   Int?
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
@@ -1220,17 +1220,17 @@ model ImportJob {
 model PsychTest {
   id              Int       @id @default(autoincrement())
   slug            String    @unique
-  title           String
-  code            String?
+  title           String @db.Text
+  code            String? @db.Text
   topic           String    @default("عمومی")
-  description     String?
-  ageRange        String?
+  description     String? @db.Text
+  ageRange        String? @db.Text
   minutes         Int?
   color           String    @default("#a83a54")
   sortOrder       Int       @default(999)
-  questions       String // JSON: [{prompt,options:[[label,score]],subscale?,image?}]
-  interpretations String? // JSON: [{scoreMin,scoreMax,label,guidance}]
-  scales          String? // JSON: زیرمقیاس‌ها با سطوح تفسیر
+  questions       String @db.MediumText   // JSON: [{prompt,options:[[label,score]],subscale?,image?}]
+  interpretations String? @db.MediumText   // JSON: [{scoreMin,scoreMax,label,guidance}]
+  scales          String? @db.MediumText   // JSON: زیرمقیاس‌ها با سطوح تفسیر
   isActive        Boolean   @default(true)
   createdAt       DateTime  @default(now())
   attempts        PsychTestAttempt[]
@@ -1244,14 +1244,14 @@ model PsychTestAttempt {
   test           PsychTest @relation(fields: [testId], references: [id])
   userId         Int // کاربر ثبت‌کننده (مشاور/خود فرد)
   user           User      @relation("PsychAttemptUser", fields: [userId], references: [id])
-  subjectName    String? // نام آزمون‌دهنده — در صورت ثبت برای متقاضی
+  subjectName    String? @db.Text   // نام آزمون‌دهنده — در صورت ثبت برای متقاضی
   subjectNid     BigInt? // کد ملی متقاضی
-  answers        String // JSON: [optionIndex, ...]
+  answers        String @db.MediumText   // JSON: [optionIndex, ...]
   score          Int       @default(0)
   percent        Int       @default(0)
-  resultLabel    String?
-  resultGuidance String?
-  subscores      String? // JSON: [{key,title,score,level,text}]
+  resultLabel    String? @db.Text
+  resultGuidance String? @db.Text
+  subscores      String? @db.MediumText   // JSON: [{key,title,score,level,text}]
   createdAt      DateTime  @default(now())
 
   @@index([testId])
@@ -1264,16 +1264,16 @@ model TrainingItem {
   id              Int       @id @default(autoincrement())
   kind            String    @default("content") // content | course | exam
   slug            String    @unique
-  title           String
-  summary         String?
-  body            String?
-  topic           String?
-  tag             String?
+  title           String @db.Text
+  summary         String? @db.Text
+  body            String? @db.Text
+  topic           String? @db.Text
+  tag             String? @db.Text
   price           Int       @default(0) // ریال — صفر = رایگان
   capacity        Int?
   startAt         DateTime?
-  sessions        String? // JSON: [{title,durationMinutes}]
-  questions       String? // JSON (kind=exam): [{prompt,options,correctIndex}]
+  sessions        String? @db.MediumText   // JSON: [{title,durationMinutes}]
+  questions       String? @db.MediumText   // JSON (kind=exam): [{prompt,options,correctIndex}]
   passPercent     Int       @default(60)
   durationMinutes Int       @default(20)
   status          String    @default("published") // draft | published
@@ -1291,7 +1291,7 @@ model TrainingAttempt {
   item         TrainingItem @relation(fields: [itemId], references: [id])
   userId       Int
   user         User         @relation("TrainingAttemptUser", fields: [userId], references: [id])
-  answers      String // JSON: [optionIndex, ...]
+  answers      String @db.Text   // JSON: [optionIndex, ...]
   scorePercent Int          @default(0)
   passed       Boolean      @default(false)
   createdAt    DateTime     @default(now())
@@ -1304,14 +1304,14 @@ model TrainingAttempt {
 model FinanceTransaction {
   id          Int      @id @default(autoincrement())
   kind        String // income | expense
-  title       String
+  title       String @db.Text
   category    String   @default("عمومی")
   amount      BigInt
-  method      String? // cash | card | transfer | cheque | online
+  method      String? @db.Text   // cash | card | transfer | cheque | online
   centerId    Int?
   eventId     Int?
   occurredAt  DateTime
-  description String?
+  description String? @db.Text
   createdBy   Int?
   createdAt   DateTime @default(now())
 

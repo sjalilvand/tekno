@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { guardAction, ok, scopeCenterIds } from "@/lib/server";
-import { ensureRoseClinics } from "@/lib/banks";
+import { ensureRoseClinics, bankErrorSummary } from "@/lib/banks";
 
 /**
  * اطلس مراکز رز — وضعیت و عملکرد هر مرکز/کلینیک روی نقشهٔ ایران (نسخهٔ ۶.۱۲)
@@ -12,7 +12,13 @@ export async function GET(req: NextRequest) {
   if (g.error) return g.error;
 
   // اگر مراکز رز هنوز از نقشهٔ ایران وارد نشده باشند، خودکار بارگذاری می‌شوند (نسخهٔ ۶.۱۳)
-  await ensureRoseClinics().catch(() => {});
+  // نسخهٔ ۶.۱۴ — خطای درون‌ریزی دیگر بی‌صدا نیست
+  const bank = await ensureRoseClinics().catch((e: unknown) => ({
+    imported: 0, updated: 0, total: 0, skipped: false,
+    errors: [e instanceof Error ? e.message.slice(0, 200) : "خطای نامشخص درون‌ریزی"],
+  }));
+  const bankError = bankErrorSummary(bank);
+  if (bankError) console.error("[atlas] خطای درون‌ریزی خودکار:", bankError);
 
   const centerIds = await scopeCenterIds(g.acc);
   const centerWhere = centerIds ? { id: { in: centerIds } } : {};
@@ -94,5 +100,5 @@ export async function GET(req: NextRequest) {
     provinces: new Set(items.map((i) => i.provinceId)).size,
   };
 
-  return ok({ items, totals });
+  return ok({ items, totals, bankError });
 }
