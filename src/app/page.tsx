@@ -36,6 +36,7 @@ import { SettingsView } from "@/views/settings";
 import { IntegrationsView } from "@/views/integrations";
 import { WebServicesView } from "@/views/webservices";
 import { BackupView } from "@/views/backup";
+import { DataTablesView } from "@/views/data-tables";
 import { HelpsView } from "@/views/helps";
 import { ProfileView } from "@/views/profile";
 import { api, useHashRouteFull } from "@/lib/client";
@@ -109,6 +110,7 @@ function ShellWithRouter({
       case "checklists": return <ChecklistsView />;
       case "webservices": return <WebServicesView />;
       case "backup": return <BackupView />;
+      case "data": return <DataTablesView />;
       case "events": return <EventsView />;
       case "group-events": return <GroupEventsView />;
       case "reserves": return <ReservesView />;

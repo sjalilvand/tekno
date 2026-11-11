@@ -1320,3 +1320,293 @@ model FinanceTransaction {
   @@index([occurredAt])
   @@map("FinanceTransactions")
 }
+
+// ---------------------------------------------------------------------
+// جدول‌های باقی‌ماندهٔ سامانهٔ قدیم (نسخهٔ ۶.۱۸) — کامل‌سازی پوشش ۷۵ جدول
+// app2_backup. نام جدول با @@map دقیقاً مطابق نام جدول legacy است تا
+// انتقال داده (import-sqlite-to-mysql) خودکار آن‌ها را شناسایی کند.
+// ---------------------------------------------------------------------
+
+// موضوع و شرح جلسه (legacy — ۵۲۴٬۷۹۰ رکورد)
+model EventPersonal {
+  id          Int       @id @default(autoincrement())
+  eventId     Int?
+  topic       String? @db.Text   // موضوع جلسه مانند ازدواج، تحصیلی
+  description String? @db.Text   // شرح جلسه
+  dateTime    DateTime?
+  @@index([eventId])
+  @@map("EventPersonal")
+}
+
+// جدول کمکی اصلاح ارجاعات (legacy — ۱۳۷٬۹۸۱ رکورد)
+model FixEndrefer {
+  id        Int       @id @default(autoincrement())
+  refId     Int?
+  userId    Int?
+  note      String? @db.Text
+  createdAt DateTime?
+  @@index([refId])
+  @@map("_fix_endrefer")
+}
+
+// فهرست عناوین شغلی (legacy — ۱۲٬۳۸۰ رکورد)
+model Job {
+  id       Int     @id @default(autoincrement())
+  title    String @db.Text
+  code     Int?
+  isActive Boolean @default(true)
+  @@map("JobsList")
+}
+
+// آزمون‌های تجویزشده در جلسه (legacy — ۸٬۷۴۰ رکورد)
+model EventQuiz {
+  id          Int       @id @default(autoincrement())
+  eventId     Int?
+  userId      Int?
+  acceptorId  Int?
+  title       String? @db.Text
+  totalScore  Float?
+  resultScore Float?
+  answers     String? @db.Text   // JSON پاسخ‌ها
+  dateTime    DateTime?
+  @@index([eventId])
+  @@map("EventQuizzes")
+}
+
+// سوابق تدریس مشاوران (legacy — ۲٬۰۶۱ رکورد)
+model ConsultantTeachingExperience {
+  id            Int       @id @default(autoincrement())
+  userId        Int?
+  consultantNid BigInt?
+  title         String? @db.Text   // عنوان درس/موضوع تدریس
+  institution   String? @db.Text
+  grade         String? @db.Text
+  hours         Int?
+  fromYear      String? @db.Text
+  toYear        String? @db.Text
+  description   String? @db.Text
+  file          String? @db.Text
+  dateTime      DateTime?
+  @@index([userId])
+  @@map("ConsultantTeachingExperience")
+}
+
+// درخواست‌های مشاوره شغلی (legacy — ۱٬۰۵۶ رکورد) — ستون‌ها مطابق ساختار واقعی
+model CareerCounseling {
+  id                  Int     @id @default(autoincrement())
+  requestStatus       String? @db.Text
+  provinceId          Int?
+  province            String? @db.Text
+  office              String? @db.Text
+  applicantNid        BigInt?
+  applicantName       String? @db.Text
+  applicantMobile     BigInt?
+  applicantGender     String? @db.Text
+  targetGroup         String? @db.Text
+  applicationDate     String? @db.Text // تاریخ ثبت به فرمت legacy
+  instituteProvinceId Int?
+  instituteProvince   String? @db.Text
+  institute           String? @db.Text
+  consultantId        Int?
+  agentId             Int?
+  budgetReserved      Boolean @default(false)
+  budgetUsed          Boolean @default(false)
+  weight              Float   @default(1)
+  @@index([provinceId])
+  @@map("CareerCounseling")
+}
+
+// فرم مشاهده و ارزیابی روان‌شناسی کودک (legacy — ۷۱۱ رکورد)
+model EventChildPsychology {
+  id           Int       @id @default(autoincrement())
+  eventId      Int?
+  userId       Int?
+  acceptorId   Int?
+  birthHistory String? @db.Text
+  development  String? @db.Text   // مراحل رشد
+  familyStatus String? @db.Text
+  schoolStatus String? @db.Text
+  behavior     String? @db.Text
+  sleep        String? @db.Text
+  speech       String? @db.Text
+  observation  String? @db.Text
+  conclusion   String? @db.Text
+  dateTime     DateTime?
+  @@index([eventId])
+  @@map("EventChildPsychology")
+}
+
+// تاریخچه همکاری مشاوران (legacy — ۶۶۶ رکورد)
+model ConsultantHistory {
+  id            Int       @id @default(autoincrement())
+  userId        Int?
+  consultantNid BigInt?
+  centerId      Int?
+  fromYear      String? @db.Text
+  toYear        String? @db.Text
+  status        String? @db.Text
+  description   String? @db.Text
+  dateTime      DateTime?
+  @@index([userId])
+  @@map("ConsultantHistory")
+}
+
+// طبقه‌بندی اختلالات روانی (legacy — ۵۱۳ رکورد)
+model Disorder {
+  id          Int     @id @default(autoincrement())
+  title       String @db.Text
+  code        String? @db.Text
+  category    String? @db.Text
+  description String? @db.Text
+  isActive    Boolean @default(true)
+  @@map("Disorders")
+}
+
+// وضعیت و کد شهرها برای API سها (legacy — ۴۳۸ رکورد)
+model ApiState {
+  id         Int       @id @default(autoincrement())
+  provinceId Int?
+  cityId     Int?
+  title      String? @db.Text
+  apiCode    Int?
+  isActive   Boolean   @default(true)
+  lastRunAt  DateTime?
+  note       String? @db.Text
+  @@index([cityId])
+  @@map("ApiStates")
+}
+
+// تنظیمات ورود دومرحله‌ای کاربران (legacy — ۱۰۳ رکورد)
+model UserMfa {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  secret        String? @db.Text
+  enabled       Boolean   @default(false)
+  method        String? @db.Text   // sms | email | app
+  recoveryCodes String? @db.Text
+  createdAt     DateTime? @default(now())
+  updatedAt     DateTime?
+  @@unique([userId])
+  @@map("UserMFA")
+}
+
+// افراد معرفی‌شده از سوی گروه‌ها و سازمان‌ها (legacy — ۳ رکورد) — مطابق ساختار واقعی
+model InvitePerson {
+  id          Int       @id @default(autoincrement())
+  nid         BigInt?
+  name        String? @db.Text
+  mobile      BigInt?
+  phone       String? @db.Text
+  description String? @db.Text
+  response    String? @db.Text
+  groupId     Int?
+  groupName   String? @db.Text
+  provinceId  Int?
+  cityId      Int?
+  centerId    Int?
+  createTime  DateTime?
+  updateTime  DateTime?
+  @@index([groupId])
+  @@map("InvitePersons")
+}
+
+// کدهای ملی مشمولان قرارداد سازمانی (legacy — ۱ رکورد)
+model CorporateContractNid {
+  id         Int       @id @default(autoincrement())
+  contractId Int?
+  nid        BigInt?
+  used       Boolean   @default(false)
+  createdAt  DateTime? @default(now())
+  @@index([contractId])
+  @@map("CorporateContractNIDs")
+}
+
+// حوزه‌های تخصصی مشاوره (legacy — ۰ رکورد)
+model ConsultScope {
+  id          Int     @id @default(autoincrement())
+  title       String @db.Text
+  description String? @db.Text
+  isActive    Boolean @default(true)
+  @@map("ConsultScope")
+}
+
+// هزینه‌های ثبت‌شدهٔ مراکز (legacy — ۰ رکورد) — مطابق ساختار واقعی
+model Expense {
+  id          Int       @id @default(autoincrement())
+  centerId    Int?
+  userId      Int?
+  category    String? @db.Text
+  type        String? @db.Text
+  title       String? @db.Text
+  payTo       String? @db.Text
+  payType     String? @db.Text   // نقدی | کارت به کارت | چک
+  fee         BigInt?
+  payDate     DateTime?
+  dateTime    DateTime? @default(now())
+  description String? @db.Text
+  fileId      Int?
+  @@index([centerId])
+  @@map("Expenses")
+}
+
+// رزرو جلسات گروهی (legacy — ۰ رکورد)
+model GroupEventReserve {
+  id           Int       @id @default(autoincrement())
+  groupEventId Int?
+  userId       Int?
+  date         DateTime?
+  status       String? @db.Text   // رزرو شده | حاضر | غایب | لغو شده
+  note         String? @db.Text
+  @@index([groupEventId])
+  @@index([userId])
+  @@map("GroupEventReserves")
+}
+
+// درآمدهای ثبت‌شدهٔ مراکز (legacy — ۰ رکورد) — مطابق ساختار واقعی
+model Income {
+  id          Int       @id @default(autoincrement())
+  centerId    Int?
+  userId      Int?
+  eventId     Int?
+  type        String? @db.Text
+  title       String? @db.Text
+  fee         BigInt?
+  incomeDate  DateTime?
+  dateTime    DateTime? @default(now())
+  description String? @db.Text
+  fileId      Int?
+  @@index([centerId])
+  @@map("Incomes")
+}
+
+// صف ارسال اعلان‌ها (legacy — ۰ رکورد)
+model NotificationQueue {
+  id          Int       @id @default(autoincrement())
+  userId      Int?
+  channel     String?   @default("sms") // sms | push | email
+  title       String? @db.Text
+  body        String? @db.Text
+  payload     String? @db.Text   // JSON
+  status      String?   @default("pending") // pending | sent | failed
+  attempts    Int       @default(0)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime? @default(now())
+  @@index([status])
+  @@index([userId])
+  @@map("NotificationsQueue")
+}
+
+// کلیدهای عبور کاربران (legacy — ۰ رکورد)
+model UserPasskey {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  credentialId String @db.Text
+  publicKey   String? @db.Text
+  counter     Int       @default(0)
+  device      String? @db.Text
+  createdAt   DateTime? @default(now())
+  lastUsedAt  DateTime?
+  @@index([userId])
+  @@map("UserPasskeys")
+}

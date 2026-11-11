@@ -50,6 +50,7 @@ export const PERM_MODULES: PermModule[] = [
   { key: "integrations", label: "یکپارچه‌سازی‌ها", group: "سیستم" },
   { key: "webservices", label: "وب‌سرویس‌ساز", group: "سیستم" },
   { key: "backup", label: "داده و پشتیبان", group: "سیستم" },
+  { key: "data", label: "مدیریت جدول‌ها", group: "سیستم" },
   { key: "logs", label: "لاگ فعالیت", group: "سیستم" },
   { key: "tickets", label: "تیکت پشتیبانی", group: "سیستم" },
   { key: "settings", label: "تنظیمات سامانه", group: "سیستم" },
