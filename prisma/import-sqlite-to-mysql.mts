@@ -64,9 +64,10 @@ if (!fs.existsSync(SOURCE)) {
 }
 
 // --------------------- تحلیل prisma/schema.prisma ---------------------
-// خروجی: جدول SQLite/MySQL → نوع منطقی هر ستون (برای تبدیل امن مقادیر)
+// خروجی: جدول SQLite/MySQL → نوع منطقی هر ستون + nullable بودن (برای تبدیل امن مقادیر)
 type Kind = "Int" | "BigInt" | "Float" | "Boolean" | "DateTime" | "String";
-type TableInfo = { model: string; columns: Record<string, Kind> };
+type ColKind = { kind: Kind; opt: boolean };
+type TableInfo = { model: string; columns: Record<string, ColKind> };
 
 function parseSchema(schemaPath: string): Map<string, TableInfo> {
   const text = fs.readFileSync(schemaPath, "utf8");
@@ -79,16 +80,18 @@ function parseSchema(schemaPath: string): Map<string, TableInfo> {
     let tableName = model;
     const mapTable = body.match(/@@map\("([^"]+)"\)/);
     if (mapTable) tableName = mapTable[1];
-    const columns: Record<string, Kind> = {};
+    const columns: Record<string, ColKind> = {};
     for (const raw of body.split("\n")) {
       const line = raw.trim();
       if (!line || line.startsWith("//") || line.startsWith("@@")) continue;
-      const fm = line.match(/^(\w+)\s+(Int|BigInt|Float|Boolean|DateTime|String)\b/);
+      // توجه: پس از (\?)? نمی‌توان از \b استفاده کرد (بین «?» و فاصله مرز واژه نیست
+      // و regex از «?» می‌گذرد) — با lookahead مرز را می‌سازیم
+      const fm = line.match(/^(\w+)\s+(Int|BigInt|Float|Boolean|DateTime|String)(\?)?(?=\s|$|@)/);
       if (!fm) continue;
-      const [, field, type] = fm;
+      const [, field, type, opt] = fm;
       const cm = line.match(/@map\("([^"]+)"\)/);
       const colName = cm ? cm[1] : field;
-      columns[colName] = type as Kind;
+      columns[colName] = { kind: type as Kind, opt: Boolean(opt) };
     }
     if (Object.keys(columns).length) tables.set(tableName, { model, columns });
   }
@@ -109,14 +112,30 @@ function epochMsToMysql(v: number): string {
     `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
 }
 
-function convert(value: unknown, kind: Kind): unknown {
-  if (value === null || value === undefined) return null;
+function convert(value: unknown, kind: Kind, opt = true): unknown {
+  if (value === null || value === undefined) {
+    // تاریخ NULL برای ستون NOT NULL: درج NULL در جلسهٔ شل (sql_mode شلِ خود importer)
+    // به «تاریخ صفر» برمی‌گردد که بعداً هم db push و هم خواندن Prisma را می‌شکند —
+    // پس مستقیم پیش‌فرض امن می‌فرستیم
+    if (!opt && kind === "DateTime") return "1970-01-01 00:00:00";
+    return null;
+  }
   switch (kind) {
     case "DateTime": {
       if (typeof value === "number") return epochMsToMysql(value);
       if (typeof value === "string") {
         if (/^-?\d+$/.test(value)) return epochMsToMysql(Number(value));
-        return value.replace("T", " ").replace(/Z$/, "").replace(/\+00:00$/, "");
+        const s = value.replace("T", " ").replace(/Z$/, "").replace(/\+00:00$/, "");
+        // تاریخ صفر/نامعتبر legacy («0000-00-00 00:00:00.000»، رشتهٔ خالی و…)
+        // در MySQL strict درج نمی‌شود و خواندنش در Prisma هم Invalid Date می‌دهد
+        // ← تبدیل به NULL (یا پیش‌فرض امن برای ستون‌های NOT NULL)
+        const dm = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+        const okDate = !!dm
+          && Number(dm[1]) >= 1000
+          && Number(dm[2]) >= 1 && Number(dm[2]) <= 12
+          && Number(dm[3]) >= 1 && Number(dm[3]) <= 31;
+        if (!okDate) return opt ? null : "1970-01-01 00:00:00";
+        return s;
       }
       return value;
     }
@@ -166,7 +185,7 @@ const bt = (id: string) => "`" + id.replace(/`/g, "``") + "`";
 
 // --------------------- نگاشت ستون‌ها ---------------------
 // ستون SQLite → ستون اسکیما (برای SELECT با نام مستعار مقصد)
-type ColMap = { sqlite: string; target: string; kind: Kind };
+type ColMap = { sqlite: string; target: string; kind: Kind; opt: boolean };
 
 function buildColMap(sqliteCols: string[], info: TableInfo): ColMap[] {
   const norm = (s: string) => s.toLowerCase().replace(/[_\-\s]+/g, "");
@@ -184,7 +203,7 @@ function buildColMap(sqliteCols: string[], info: TableInfo): ColMap[] {
     const target = exact.has(col) ? col : (lower.get(col.toLowerCase()) ?? normed.get(norm(col)));
     if (target && !used.has(target)) {
       used.add(target);
-      out.push({ sqlite: col, target, kind: info.columns[target] });
+      out.push({ sqlite: col, target, kind: info.columns[target].kind, opt: info.columns[target].opt });
     }
   }
   return out;
@@ -273,9 +292,9 @@ if (DRY_RUN) {
     const row = sqlite.prepare(`SELECT ${colSel} FROM ${q(sample.table)} LIMIT 1`).get() as Record<string, unknown>;
     console.log(`نمونهٔ تبدیل (${sample.table}):`);
     for (const [col, val] of Object.entries(row)) {
-      const kind = sample.info.columns[col];
-      if (!kind) continue;
-      console.log(`  ${col} [${kind}] ${JSON.stringify(val)?.slice(0, 40)} → ${JSON.stringify(convert(val, kind))?.slice(0, 60)}`);
+      const ck = sample.info.columns[col];
+      if (!ck) continue;
+      console.log(`  ${col} [${ck.kind}${ck.opt ? "?" : ""}] ${JSON.stringify(val)?.slice(0, 40)} → ${JSON.stringify(convert(val, ck.kind, ck.opt))?.slice(0, 60)}`);
     }
   }
   console.log("\nاجرای آزمایشی به پایان رسید (بدون نوشتن در MySQL). برای انتقال واقعی --dry-run را حذف کنید.");
@@ -292,7 +311,36 @@ function hasRowid(table: string): boolean {
 
 const t0 = Date.now();
 let grandTotal = 0;
+let grandBad = 0;
 const failed: { name: string; error: string }[] = [];
+
+// درج دسته‌ای؛ در شکست دسته، ردیف‌به‌ردیف ادامه می‌دهد تا یک ردیف نامعتبر
+// (مثلاً تاریخ خراب یا متن بلندتر از حد) بقیهٔ جدول را از کار نیندازد
+let tableBad = 0;
+async function insertResilient(sql: string, rows: any[][], table: string): Promise<number> {
+  try {
+    await conn.query(sql, [rows]);
+    return rows.length;
+  } catch (batchErr: any) {
+    let ok = 0;
+    for (const r of rows) {
+      try {
+        await conn.query(sql, [[r]]);
+        ok++;
+      } catch (e: any) {
+        tableBad++;
+        if (tableBad <= 5) {
+          console.error(`\n     ⚠ ${table}: ردیف نامعتبر رد شد — ${String(e?.message ?? "").slice(0, 180)}`);
+        }
+      }
+    }
+    if (tableBad === rows.length && tableBad > 0) {
+      // اگر کل دسته شکست خورد، خطای دسته را هم برای تشخیص ثبت کن
+      console.error(`     … کل دستهٔ ${rows.length} ردیفی رد شد — نمونهٔ خطا: ${String(batchErr?.message ?? "").slice(0, 180)}`);
+    }
+    return ok;
+  }
+}
 
 for (const p of plan) {
   const { table, info, count, cols } = p;
@@ -303,6 +351,7 @@ for (const p of plan) {
   }
   const started = Date.now();
   let inserted = 0;
+  tableBad = 0;
   try {
     if (MODE === "truncate") {
       await conn.query(`TRUNCATE TABLE ${bt(table)}`);
@@ -330,9 +379,8 @@ for (const p of plan) {
         ).all(lastRowid, BATCH) as any[];
         if (!rows.length) break;
         lastRowid = rows[rows.length - 1].__rz_rowid ?? lastRowid;
-        const values = rows.map((r) => cols.map((c) => convert(r[c.target], c.kind)));
-        await conn.query(insertSql, [values]);
-        inserted += rows.length;
+        const values = rows.map((r) => cols.map((c) => convert(r[c.target], c.kind, c.opt)));
+        inserted += await insertResilient(insertSql, values, table);
         const pct = ((inserted / count) * 100).toFixed(1);
         process.stdout.write(`\r  ⏳ ${table} ${inserted.toLocaleString("en-US")}/${count.toLocaleString("en-US")} (${pct}%)   `);
       }
@@ -341,19 +389,19 @@ for (const p of plan) {
       for (let offset = 0; offset < count; offset += BATCH) {
         const rows = sqlite.prepare(`SELECT ${colSel} FROM ${q(table)} LIMIT ? OFFSET ?`).all(BATCH, offset) as any[];
         if (!rows.length) break;
-        const values = rows.map((r) => cols.map((c) => convert(r[c.target], c.kind)));
-        await conn.query(insertSql, [values]);
-        inserted += rows.length;
+        const values = rows.map((r) => cols.map((c) => convert(r[c.target], c.kind, c.opt)));
+        inserted += await insertResilient(insertSql, values, table);
         const pct = ((inserted / count) * 100).toFixed(1);
         process.stdout.write(`\r  ⏳ ${table} ${inserted.toLocaleString("en-US")}/${count.toLocaleString("en-US")} (${pct}%)   `);
       }
     }
 
     const secs = ((Date.now() - started) / 1000).toFixed(1);
-    console.log(`\r  ✔ ${table} — ${inserted.toLocaleString("en-US")} ردیف در ${secs} ثانیه${" ".repeat(10)}`);
-    status[table] = { rows: inserted, done: true, ts: new Date().toISOString() };
+    console.log(`\r  ✔ ${table} — ${inserted.toLocaleString("en-US")} ردیف در ${secs} ثانیه${tableBad ? ` — ${tableBad.toLocaleString("en-US")} ردیف نامعتبر رد شد` : ""}${" ".repeat(10)}`);
+    status[table] = { rows: inserted, done: true, skipped: tableBad, ts: new Date().toISOString() };
     saveStatus();
     grandTotal += inserted;
+    grandBad += tableBad;
   } catch (e: any) {
     const msg = e?.message ?? "خطای ناشناخته";
     console.error(`\r  ✘ ${table} — خطا: ${msg}${" ".repeat(20)}`);
@@ -377,6 +425,7 @@ if (failed.length) {
 }
 status.state = failed.length ? "partial" : "done";
 status.phase = failed.length ? "پایان با جدول‌های ناقص" : "پایان موفق";
+status.skippedRows = grandBad;
 saveStatus();
 console.log(`  وضعیت در فایل: ${statusFile}`);
 console.log("مرحلهٔ بعد: اجرای سامانه با npm run build و npm run start");

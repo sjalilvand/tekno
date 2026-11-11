@@ -1,5 +1,9 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۲)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۱۵)
+#  تغییرات ۶.۱۵: رفع شکست «prisma db push» روی دیتابیس legacy —
+#  پاک‌سازی خودکار تاریخ‌های صفر («0000-00-00») قبل از db push و بعد از انتقال +
+#  درون‌ریز: تاریخ نامعتبر legacy → NULL (به‌جای شکست درج) + تلاش ردیف‌به‌ردیف
+#  در شکست دسته‌های ۵۰۰تایی تا یک ردیف خراب بقیهٔ جدول را نیندازد
 #  تغییرات ۶.۲: وب‌سرویس‌ساز (REST API با JSON/XML/CSV + کلید API) + به‌روزرسانی
 #  داده با پشتیبان جدید (صف ImportJob با پایش پیشرفت) + جداول WebServices/ImportJobs
 #  + داشبورد اصلی: شاخص‌های کلیدی با تفسیر + امتیاز سلامت داده
@@ -260,6 +264,27 @@ function Install-Dependencies {
   Write-Ok "وابستگی‌ها نصب شدند"
 }
 
+# ------------------------------------------------------------- پاک‌سازی تاریخ‌های نامعتبر
+# سامانهٔ قدیمی برای «تاریخ ثبت‌نشده» مقدار صفر («0000-00-00») می‌نوشت؛ این مقادیر
+# با حالت strict سرورهای MySQL جدید ناسازگارند:
+#   • «prisma db push» هنگام بازسازی جدول با خطای
+#     «Incorrect datetime value: '0000-00-00 00:00:00.000'» متوقف می‌شود
+#     (همان شکستی که در deploy -Mode update دیده شد)
+#   • Prisma Client هم هنگام خواندن همان ردیف‌ها خطای Invalid Date می‌دهد
+# این تابع همهٔ ستون‌های تاریخ/ساعت دیتابیس را پاک‌سازی می‌کند:
+#   ستون nullable → NULL | ستون NOT NULL → پیش‌فرض امن
+function Invoke-ZeroDateFix {
+  Push-Location $InstallDir
+  try {
+    $fixScript = "prisma/fix-zero-dates.mjs"
+    if (-not (Test-Path $fixScript)) { return }
+    Invoke-Native { node $fixScript --mysql "$(Build-MysqlUrl)" 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warn2 "پاک‌سازی تاریخ‌های نامعتبر ناموفق بود — ادامه می‌دهیم؛ اگر دادهٔ خرابی مانده باشد prisma db push خودش خطا می‌دهد"
+    }
+  } finally { Pop-Location }
+}
+
 # ------------------------------------------------------------- همگام‌سازی اسکیمای MySQL
 # در حالت import هم اجرا می‌شود تا تغییر ساختار (مثل حذف کلیدهای یکتای ناسازگار با دادهٔ legacy) اعمال شود
 # با -AllowReset: اگر push معمولی به‌خاطر ناسازگاری ساختار موجود شکست خورد
@@ -269,6 +294,10 @@ function Invoke-MysqlSchemaSync {
   param([switch]$AllowReset)
   Push-Location $InstallDir
   try {
+    # ۱) پاک‌سازی تاریخ‌های صفر legacy — وگرنه db push هنگام بازسازی جدول‌ها
+    #    با «Incorrect datetime value: '0000-00-00'» متوقف می‌شود
+    Write-Step "پاک‌سازی تاریخ‌های نامعتبر legacy در MySQL"
+    Invoke-ZeroDateFix
     Write-Step "اتصال به MySQL واقعی — prisma db push --schema prisma/schema.mysql.prisma"
     # client تولیدی نهایی باید از اسکیمای MySQL باشد
     Invoke-Native { npx prisma generate --schema prisma/schema.mysql.prisma 2>&1 | Out-Null }
@@ -285,7 +314,7 @@ function Invoke-MysqlSchemaSync {
         if ($LASTEXITCODE -ne 0) { Write-Fail "بازسازی ساختار MySQL هم ناموفق بود — دیتابیس «$MysqlDatabase» را از نو بسازید" }
         Write-Ok "ساختار جداول از نو ساخته شد (۵۷ جدول) — انتقال کامل داده در مرحلهٔ بعد"
       } else {
-        Write-Warn2 "prisma db push ناموفق بود — احتمالاً دیتابیس «$MysqlDatabase» وجود ندارد"
+        Write-Warn2 "prisma db push ناموفق بود — اگر خطای «Incorrect datetime value: '0000-00-00'» دیدید، تاریخ صفر legacy در دیتابیس است و باید مرحلهٔ پاک‌سازی بالای همین خروجی موفق شده باشد"
         Write-Host "  ایجاد دستی دیتابیس:" -ForegroundColor Yellow
         Write-Host "    mysql -u $MysqlUser -p -e `"CREATE DATABASE $MysqlDatabase CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`"" -ForegroundColor Yellow
         Write-Host "  اگر دیتابیس هست ولی ساختار قدیمی است، یک‌بار اجرا کنید:" -ForegroundColor Yellow
@@ -349,6 +378,10 @@ function Invoke-DataImport {
       Invoke-Native { npx --yes tsx $importer --source "$src" --mysql "$(Build-MysqlUrl)" --mode truncate --resume 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
     }
     if ($LASTEXITCODE -ne 0) { Write-Fail "انتقال داده ناموفق بود — پس از رفع مشکل با --resume ادامه دهید" }
+    # ۲) پاک‌سازی نهایی: اگر تاریخ صفر/نامعتبری از فایل legacy عبور کرده باشد (مثل
+    #    مسیر قدیمی .ts یا مقدارهای غیرقابل پیش‌بینی)، قبل از استفادهٔ سامانه تمیز شود
+    Write-Step "پاک‌سازی تاریخ‌های نامعتبر بعد از انتقال"
+    Invoke-ZeroDateFix
   } finally {
     Pop-Location
   }
@@ -533,7 +566,7 @@ switch ($Mode) {
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۶.۲" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۶.۱۵" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {
