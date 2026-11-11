@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, guardAdmin, ok, fail, params } from "@/lib/server";
 import roseClinicsJson from "@/data/rose-clinics.json";
+import { ensureRoseClinics } from "@/lib/banks";
 import type { Prisma } from "@prisma/client";
 
 type RoseClinic = {
@@ -94,6 +95,9 @@ export async function GET(req: NextRequest) {
   const user = await getCurrentUser(req);
   if (!user) return fail("UNAUTHORIZED", 401);
   const { q, provinceId, page, pageSize } = params(req);
+
+  // بارگذاری خودکار مراکز رز اگر هنوز مختصات نقشه نداشته باشند (نسخهٔ ۶.۱۳)
+  await ensureRoseClinics().catch(() => {});
 
   const where: Prisma.CenterWhereInput = {};
   if (q) where.title = { contains: q };

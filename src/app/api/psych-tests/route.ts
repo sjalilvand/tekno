@@ -3,11 +3,15 @@ import { db } from "@/lib/db";
 import { guardAction, guardAdmin, ok, fail } from "@/lib/server";
 import psychTestsJson from "@/data/psych-tests.json";
 import type { PsychTestJson } from "@/lib/psych";
+import { ensurePsychTests } from "@/lib/banks";
 
 /** فهرست آزمون‌های روان‌شناختی — بانک واردشده از مخزن special-spoon (نسخهٔ ۶.۱۲) */
 export async function GET(req: NextRequest) {
   const g = await guardAction(req, "psych", "view", "آزمون‌های روان‌شناختی");
   if (g.error) return g.error;
+
+  // اگر بانک خالی باشد، ۴۰ آزمون استاندارد خودکار بارگذاری می‌شود (نسخهٔ ۶.۱۳)
+  await ensurePsychTests().catch(() => {});
 
   const tests = await db.psychTest.findMany({
     where: g.acc.isAdmin ? {} : { isActive: true },

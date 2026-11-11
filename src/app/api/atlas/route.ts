@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { guardAction, ok, scopeCenterIds } from "@/lib/server";
+import { ensureRoseClinics } from "@/lib/banks";
 
 /**
  * اطلس مراکز رز — وضعیت و عملکرد هر مرکز/کلینیک روی نقشهٔ ایران (نسخهٔ ۶.۱۲)
@@ -9,6 +10,9 @@ import { guardAction, ok, scopeCenterIds } from "@/lib/server";
 export async function GET(req: NextRequest) {
   const g = await guardAction(req, "atlas", "view", "اطلس مراکز رز");
   if (g.error) return g.error;
+
+  // اگر مراکز رز هنوز از نقشهٔ ایران وارد نشده باشند، خودکار بارگذاری می‌شوند (نسخهٔ ۶.۱۳)
+  await ensureRoseClinics().catch(() => {});
 
   const centerIds = await scopeCenterIds(g.acc);
   const centerWhere = centerIds ? { id: { in: centerIds } } : {};

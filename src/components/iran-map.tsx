@@ -78,7 +78,25 @@ export function IranMap({
   onSelect?: (id: number | string) => void;
   className?: string;
 }) {
-  const [hovered, setHovered] = React.useState<{ m: MapMarker; x: number; y: number } | null>(null);
+  const [hoveredMarker, setHoveredMarker] = React.useState<string | number | null>(null);
+
+  // موقعیت درصدی نشانگر برای تولتیپ — از همان مختصات نشانگرها
+  const markerPos = React.useCallback((m: MapMarker) => {
+    const key = KEY_BY_CODE[String(m.provinceId).padStart(2, "0")];
+    const center = key ? IRAN_PROVINCE_CENTER[key] : undefined;
+    if (!center) return null;
+    const group = markers.filter((x) => x.provinceId === m.provinceId);
+    const gi = group.findIndex((x) => x.id === m.id);
+    const n = group.length;
+    let dx = 0, dy = 0;
+    if (n > 1) {
+      const radius = Math.min(10 + n * 1.6, 22);
+      const angle = (gi / n) * Math.PI * 2 - Math.PI / 2;
+      dx = Math.cos(angle) * radius;
+      dy = Math.sin(angle) * radius * 0.9;
+    }
+    return { x: ((center[0] + dx) / IRAN_VIEWBOX.w) * 100, y: ((center[1] + dy) / IRAN_VIEWBOX.h) * 100 };
+  }, [markers]);
 
   // گروه‌بندی نشانگرها بر پایهٔ استان — چند مرکز در یک استان کنار هم
   const byProvince = React.useMemo(() => {
@@ -129,17 +147,26 @@ export function IranMap({
         })}
       </svg>
 
-      {/* نشانگر مراکز — مطلق روی نقشه */}
-      {markers.map((m, idx) => {
+      {/* نشانگر مراکز — مطلق روی نقشه، خوشه‌چینی چند مرکز یک استان (نسخهٔ ۶.۱۳) */}
+      {markers.map((m) => {
         const key = KEY_BY_CODE[String(m.provinceId).padStart(2, "0")];
         const center = key ? IRAN_PROVINCE_CENTER[key] : undefined;
         if (!center) return null;
-        const groupIndex = (byProvince.get(m.provinceId) ?? []).findIndex((x) => x.id === m.id);
-        const dx = (groupIndex % 3 - 1) * 10;
-        const dy = Math.floor(groupIndex / 3) * 10;
+        const group = byProvince.get(m.provinceId) ?? [];
+        const groupIndex = group.findIndex((x) => x.id === m.id);
+        const n = group.length;
+        let dx = 0, dy = 0;
+        if (n > 1) {
+          // چند مرکز در یک استان — پخش روی یک دایرهٔ کوچک دور مرکز استان
+          const radius = Math.min(10 + n * 1.6, 22);
+          const angle = (groupIndex / n) * Math.PI * 2 - Math.PI / 2;
+          dx = Math.cos(angle) * radius;
+          dy = Math.sin(angle) * radius * 0.9;
+        }
         const x = ((center[0] + dx) / IRAN_VIEWBOX.w) * 100;
         const y = ((center[1] + dy) / IRAN_VIEWBOX.h) * 100;
         const selected = m.id === selectedId;
+        const hovered = hoveredMarker === m.id;
         return (
           <button
             key={m.id}
@@ -148,8 +175,8 @@ export function IranMap({
               selected ? "scale-125" : "hover:scale-110"
             )}
             style={{ left: `${x}%`, top: `${y}%` }}
-            onMouseEnter={() => setHovered({ m, x, y })}
-            onMouseLeave={() => setHovered(null)}
+            onMouseEnter={() => setHoveredMarker(m.id)}
+            onMouseLeave={() => setHoveredMarker(null)}
             onClick={() => onSelect?.(m.id)}
             aria-label={`${m.title} — ${m.value}`}
           >
@@ -160,28 +187,41 @@ export function IranMap({
               )}
               style={{ background: TONE_HEX[m.tone] }}
             >
+              {n > 1 && (
+                <span className="absolute -top-1.5 -left-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-foreground px-0.5 text-[8px] font-black leading-none text-background">
+                  {faNum(n)}
+                </span>
+              )}
               {m.tone === "emerald" && (
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-40" style={{ background: TONE_HEX[m.tone] }} />
               )}
             </span>
-            <span className="pointer-events-none absolute -bottom-5 right-1/2 translate-x-1/2 whitespace-nowrap text-[9.5px] font-bold text-foreground/90">
-              {m.value}
-            </span>
+            {(hovered || selected) && (
+              <span className="pointer-events-none absolute -bottom-5 right-1/2 translate-x-1/2 whitespace-nowrap rounded-md bg-background/90 px-1.5 text-[9.5px] font-bold text-foreground/90 shadow-sm">
+                {m.value}
+              </span>
+            )}
           </button>
         );
       })}
 
-      {/* تولتیپ شناور */}
-      {hovered && (
-        <div
-          className="pointer-events-none absolute z-20 max-w-[220px] -translate-x-1/2 -translate-y-[120%] rounded-xl border bg-popover px-3 py-2 text-right shadow-xl"
-          style={{ left: `${hovered.x}%`, top: `${hovered.y}%` }}
-        >
-          <p className="text-[11px] font-extrabold leading-4">{hovered.m.title}</p>
-          {hovered.m.sub && <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{hovered.m.sub}</p>}
-          <p className="mt-1 text-[10.5px] font-bold" style={{ color: TONE_HEX[hovered.m.tone] }}>{hovered.m.value}</p>
-        </div>
-      )}
+      {/* تولتیپ شناور — بر پایهٔ نشانگر فعال */}
+      {(() => {
+        const hm = markers.find((x) => x.id === hoveredMarker) ?? null;
+        if (!hm) return null;
+        const pos = markerPos(hm);
+        if (!pos) return null;
+        return (
+          <div
+            className="pointer-events-none absolute z-20 max-w-[220px] -translate-x-1/2 -translate-y-[120%] rounded-xl border bg-popover px-3 py-2 text-right shadow-xl"
+            style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
+          >
+            <p className="text-[11px] font-extrabold leading-4">{hm.title}</p>
+            {hm.sub && <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{hm.sub}</p>}
+            <p className="mt-1 text-[10.5px] font-bold" style={{ color: TONE_HEX[hm.tone] }}>{hm.value}</p>
+          </div>
+        );
+      })()}
 
       {/* راهنمای سریع */}
       <div className="mt-2 flex justify-center">

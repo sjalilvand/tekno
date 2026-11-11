@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { guardAction, guardAdmin, ok, fail, params } from "@/lib/server";
 import trainingJson from "@/data/training-items.json";
+import { ensureTrainingItems } from "@/lib/banks";
 
 type ExamQuestion = { prompt: string; options: string[]; correctIndex: number };
 
@@ -9,6 +10,9 @@ type ExamQuestion = { prompt: string; options: string[]; correctIndex: number };
 export async function GET(req: NextRequest) {
   const g = await guardAction(req, "training", "view", "آموزش‌ها");
   if (g.error) return g.error;
+
+  // اگر بانک آموزش خالی باشد، محتوای آکادمی رز خودکار بارگذاری می‌شود (نسخهٔ ۶.۱۳)
+  await ensureTrainingItems().catch(() => {});
   const { q } = params(req);
   const allParam = req.nextUrl.searchParams.get("all") === "1";
 
