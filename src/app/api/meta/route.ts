@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   // (مدیر همه / مدیر استان مراکز استان / مدیر کلینیک و مشاور فقط کلینیک‌های خودشان)
   const acc = await resolveAccess(req);
   const allowedCenters = acc ? await scopeCenterIds(acc) : null;
-  const [provinces, services, centers, roles, education, marriage] = await Promise.all([
+  const [provinces, services, centers, roles, education, marriage, cities] = await Promise.all([
     db.province.findMany({ select: { id: true, title: true }, orderBy: { id: "asc" } }),
     db.service.findMany({ select: { id: true, name: true, short: true } }),
     db.center.findMany({
@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
     db.role.findMany({ orderBy: { id: "asc" } }),
     db.education.findMany(),
     db.marriage.findMany(),
+    db.city.findMany({ select: { id: true, title: true, provinceId: true }, orderBy: { title: "asc" } }),
   ]);
-  return ok({ provinces, services, centers, roles, education, marriage, scoped: Boolean(allowedCenters) });
+  return ok({ provinces, cities, services, centers, roles, education, marriage, scoped: Boolean(allowedCenters) });
 }
