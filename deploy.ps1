@@ -1,5 +1,13 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۲۰)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۲۳)
+#  تغییرات ۶.۲۳: به‌روزرسانی دیتا از پشتیبان MySQL «بدون نیاز به نصب MySQL» —
+#  درون‌ریز جریانی داخلی Node (scripts/import-mysqldump.mjs) پشتیبان‌های چند گیگابایتی
+#  (خروجی mysqldump مثل app2_backup_202611031659.sql) را مستقیماً در SQLite سامانه
+#  می‌ریزد — بدون سرور دیتابیس، بدون کلاینت mysql و بدون ماژول native؛ چون دانلود
+#  بستهٔ MySQL/MariaDB از CDNهای Oracle برای IPهای ایران با خطای «403 Oracle Export
+#  Error» می‌شکند. حالت sqlimport خودش موتور دیتابیس را از .env تشخیص می‌دهد؛ مسیر
+#  MySQL فقط وقتی کاربر صریحاً -DbEngine mysql بدهد و کلاینت موجود باشد استفاده می‌شود.
+#  + پشتیبان‌گیری خودکار app.sqlite پیش از درون‌ریزی + رفع خط «False» اضافهٔ خروجی
 #  تغییرات ۶.۲۰: حفظ پورت در حالت update — اگر -AppPort داده نشده باشد، پورت
 #  از .env قبلی خوانده می‌شود (استقرار روی سرور با پورت غیر ۳۰۰۰ دیگر با هر
 #  به‌روزرسانی به ۳۰۰۰ برنمی‌گردد) + شماره نسخهٔ بنر پایانی از package.json
@@ -501,14 +509,41 @@ function Invoke-SeedAdmin {
   Write-Ok "حساب‌های admin / manager / consultant با رمز 123456 آماده‌اند"
 }
 
-# ------------------------------------------------------------- به‌روزرسانی دیتا از پشتیبان MySQL (نسخهٔ ۶.۲۲)
+# ------------------------------------------------------------- به‌روزرسانی دیتا از پشتیبان MySQL (نسخهٔ ۶.۲۲ — بازنویسی ۶.۲۳)
 # کاربر هر وقت پشتیبان جدید گرفت (مثل app2_backup_202611031659.sql خروجی mysqldump)
 # با یک دستور دیتای سرور را کامل به‌روز می‌کند:
 #   .\deploy.ps1 -Mode sqlimport -SqlFile "C:\rahe_zendegi\app2_backup_202611031659.sql"
-# مراحل: توقف سامانه → بازسازی دیتابیس → restore کامل پشتیبان → تأیید شمارش‌ها
-#   → پاک‌سازی تاریخ صفر → همگام‌سازی اسکیما → seed مدیر → اجرای مجدد
+# موتور از .env تشخیص داده می‌شود:
+#   • SQLite (پیش‌فرض سرور) → درون‌ریز جریانی Node — بدون هیچ MySQL
+#   • MySQL (فقط اگر صریحاً خواسته شود و کلاینت موجود باشد) → مسیر قدیمی mysql client
 
-# یافتن کلاینت mysql.exe — مسیر صریح یا مکان‌های شناخته‌شده
+# مسیر فایل دیتابیس SQLite از .env (یا پیش‌فرض DataDir\app.sqlite)
+function Get-SqliteDbPath {
+  $envPath = Join-Path $InstallDir ".env"
+  if (Test-Path $envPath) {
+    $c = Get-Content $envPath -Raw -ErrorAction SilentlyContinue
+    if ($c) {
+      $m = [regex]::Match($c, '(?m)^\s*DATABASE_URL\s*=\s*"?file:([^"\r\n]+?)"?\s*$')
+      if ($m.Success) {
+        $p = $m.Groups[1].Value.Trim().Replace('/', '\')
+        if (-not [System.IO.Path]::IsPathRooted($p)) { $p = Join-Path $InstallDir $p }
+        return $p
+      }
+    }
+  }
+  return (Get-SqlitePath)
+}
+
+# اعتبارسنجی مسیر پشتیبان
+function Resolve-SqlBackupPath {
+  param([string]$Raw)
+  if (-not $Raw) { Write-Fail "مسیر فایل پشتیبان را بدهید؛ مثلاً:  -SqlFile 'C:\rahe_zendegi\app2_backup_202611031659.sql'" }
+  $resolved = Resolve-Path $Raw -ErrorAction SilentlyContinue
+  if (-not $resolved) { Write-Fail "فایل پشتیبان پیدا نشد: $Raw" }
+  return $resolved.Path
+}
+
+# یافتن کلاینت mysql.exe — مسیر صریح یا مکان‌های شناخته‌شده (فقط مسیر MySQL)
 function Find-MysqlClient {
   if ($MysqlBinDir) {
     $exe = Join-Path $MysqlBinDir "mysql.exe"
@@ -578,25 +613,18 @@ function Test-SqlDumpTarget {
   } catch {}
 }
 
-function Invoke-SqlImport {
-  param([bool]$NeedBuild = $false)
-  Write-Step "به‌روزرسانی دیتا از پشتیبان SQL"
-  if (-not $SqlFile) { Write-Fail "مسیر فایل پشتیبان را بدهید؛ مثلاً:  -SqlFile 'C:\rahe_zendegi\app2_backup_202611031659.sql'" }
-  $sqlPath = Resolve-Path $SqlFile -ErrorAction SilentlyContinue
-  if (-not $sqlPath) { Write-Fail "فایل پشتیبان پیدا نشد: $SqlFile" }
-  $sqlPath = $sqlPath.Path
-  $sizeGB = [Math]::Round((Get-Item $sqlPath).Length / 1GB, 2)
-  Write-Ok "فایل پشتیبان: $sqlPath ($sizeGB گیگابایت)"
+function Invoke-SqlImportMysql {
+  # مسیر قدیمی MySQL — سامانه باید از قبل متوقف باشد (تماس‌دهنده مسئول توقف/اجراست)
+  param([string]$SqlPath)
+  $sizeGB = [Math]::Round((Get-Item $SqlPath).Length / 1GB, 2)
+  Write-Ok "فایل پشتیبان: $SqlPath ($sizeGB گیگابایت)"
 
   $mysqlExe = Find-MysqlClient
   if (-not $mysqlExe) {
-    Write-Fail "کلاینت mysql پیدا نشد — اگر MySQL با server.ps1 نصب شده باشد در $InstallDir..\mysql\server\bin است؛ یا مسیر را با -MysqlBinDir بدهید"
+    Write-Fail "کلاینت mysql پیدا نشد — اگر MySQL با server.ps1 نصب شده باشد در $InstallDir..\mysql\server\bin است؛ یا مسیر را با -MysqlBinDir بدهید؛ یا بدون -DbEngine mysql اجرا کنید تا درون‌ریز داخلی SQLite استفاده شود"
   }
   Write-Ok "کلاینت: $mysqlExe"
-  Test-SqlDumpTarget -File $sqlPath
-
-  # سامانه باید خاموش باشد تا اتصال‌ها DROP DATABASE را قفل نکنند
-  Stop-App
+  Test-SqlDumpTarget -File $SqlPath
 
   Write-Host "  بازسازی دیتابیس «$MysqlDatabase» …" -ForegroundColor DarkGray
   [void](Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SET GLOBAL sql_mode = ''; SET GLOBAL max_allowed_packet = 1073741824;")
@@ -610,7 +638,7 @@ function Invoke-SqlImport {
   try {
     $rArgs = @("--no-defaults","--default-character-set=utf8mb4","--max-allowed-packet=1G","-h",$MysqlHost,"-P","$MysqlPort","-u",$MysqlUser,$MysqlDatabase)
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    $proc = Start-Process -FilePath $mysqlExe -ArgumentList $rArgs -RedirectStandardInput $sqlPath -RedirectStandardOutput $outLog -RedirectStandardError $errLog -NoNewWindow -Wait -PassThru
+    $proc = Start-Process -FilePath $mysqlExe -ArgumentList $rArgs -RedirectStandardInput $SqlPath -RedirectStandardOutput $outLog -RedirectStandardError $errLog -NoNewWindow -Wait -PassThru
     $code = $proc.ExitCode
     $ErrorActionPreference = $prev
   } finally { Remove-Item Env:MYSQL_PWD -ErrorAction SilentlyContinue }
@@ -638,15 +666,39 @@ function Invoke-SqlImport {
   # پاک‌سازی تاریخ صفر + همگام‌سازی اسکیمای جدید (جدول‌های تازهٔ ۶.۱۸ و بعد)
   Invoke-MysqlSchemaSync
   Invoke-SeedAdmin
+}
 
-  # اگر موتور دیتابیس تازه از SQLite عوض شده، client داخل نسخهٔ تولیدی باید از نو ساخته شود
-  if ($NeedBuild) {
-    Write-Warn2 "موتور دیتابیس از SQLite به MySQL تغییر کرد — build مجدد لازم است"
-    Invoke-Build
+# نقطهٔ ورود واحد «به‌روزرسانی دیتا از پشتیبان» — موتور را خودش انتخاب می‌کند
+function Invoke-SqlFileImport {
+  # KeepAppStopped: در install/update که Start-App بعداً خود اسکریپت انجام می‌دهد
+  param([string]$SqlFileRaw, [switch]$KeepAppStopped)
+  $sqlPath = Resolve-SqlBackupPath -Raw $SqlFileRaw
+  $sizeGB = [Math]::Round((Get-Item $sqlPath).Length / 1GB, 2)
+  Write-Step "به‌روزرسانی دیتا از پشتیبان SQL ($sizeGB گیگابایت)"
+
+  if ($DbEngine -eq "mysql") {
+    [void](Stop-App)
+    Invoke-SqlImportMysql -SqlPath $sqlPath
   } else {
-    Write-Ok "کد و نسخهٔ تولیدی بدون تغییر — build لازم نیست"
+    # مسیر SQLite — درون‌ریز جریانی Node؛ بدون هیچ سرور/کلاینت MySQL (نسخهٔ ۶.۲۳)
+    [void](Stop-App)
+    $dbPath = Get-SqliteDbPath
+    if (-not (Test-Path $dbPath)) { Write-Fail "فایل دیتابیس پیدا نشد: $dbPath — ابتدا استقرار کامل انجام شود" }
+    # پشتیبان از دیتابیس فعلی — اگر درون‌ریزی خراب شد قابل برگشت است
+    $bak = "$dbPath.backup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    try { Copy-Item $dbPath $bak -Force; Write-Ok "پشتیبان دیتابیس فعلی: $bak" } catch { Write-Warn2 "پشتیبان‌گیری دیتابیس ناموفق بود: $($_.Exception.Message)" }
+    $report = Join-Path $DataDir "sqlimport-report.json"
+    Push-Location $InstallDir
+    try {
+      Write-Host "  درون‌ریزی جریانی با Node — بدون نیاز به MySQL؛ بسته به حجم فایل چند دقیقه، پنجره را نبندید…" -ForegroundColor Cyan
+      Invoke-Native { node scripts/import-mysqldump.mjs --sql "$sqlPath" --db "$dbPath" --report "$report" 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+      $code = $LASTEXITCODE
+    } finally { Pop-Location }
+    if ($code -ne 0) { Write-Fail "درون‌ریزی پشتیبان ناموفق بود — خروجی بالا و گزارش $report را بررسی کنید" }
+    Write-Ok "دیتای پشتیبان کامل وارد SQLite شد"
+    Invoke-SeedAdmin
   }
-  Start-App
+  if (-not $KeepAppStopped) { Start-App }
   Write-Host ""
   Write-Host "  ✔ دیتای سامانه با پشتیبان جدید به‌روز شد — http://localhost:$AppPort" -ForegroundColor Green
 }
@@ -805,8 +857,9 @@ switch ($Mode) {
     Invoke-PrismaSetup
     if ($ImportSqlite) { Invoke-DataImport }
     Invoke-SeedAdmin
-    Stop-App -Quiet   # آزادسازی قفل فایل‌های .next پیش از build (رفع EPERM)
+    [void](Stop-App -Quiet)   # آزادسازی قفل فایل‌های .next پیش از build — [void] تا «False» اضافه در خروجی نماند
     Invoke-Build
+    if ($SqlFile) { Invoke-SqlFileImport -SqlFileRaw $SqlFile -KeepAppStopped }   # درون‌ریزی پشتیبان پیش از اجرا (۶.۲۳)
     Start-App
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
@@ -837,13 +890,14 @@ switch ($Mode) {
     Install-Dependencies
     Invoke-PrismaSetup
     Invoke-SeedAdmin
-    Stop-App -Quiet   # آزادسازی قفل فایل‌های .next پیش از build (رفع EPERM)
+    [void](Stop-App -Quiet)   # آزادسازی قفل فایل‌های .next پیش از build — [void] تا «False» اضافه در خروجی نماند
     Invoke-Build
+    if ($SqlFile) { Invoke-SqlFileImport -SqlFileRaw $SqlFile -KeepAppStopped }   # درون‌ریزی پشتیبان پیش از اجرا (۶.۲۳)
     Start-App
   }
   "start"   { Start-App }
-  "stop"    { Stop-App }
-  "restart" { Stop-App; Start-App }
+  "stop"    { [void](Stop-App) }
+  "restart" { [void](Stop-App); Start-App }
   "status"  { Show-Status }
   "import"  {
     # کد مخزن ابتدا از GitHub به‌روزرسانی می‌شود — تا importr/اسکیما همیشه جدید باشند؛
@@ -857,17 +911,37 @@ switch ($Mode) {
     Write-Host "  مرحلهٔ بعد: .\deploy.ps1 -Mode update -DbEngine mysql  (ساخت و اجرای مجدد سامانه)" -ForegroundColor Magenta
   }
   "sqlimport" {
-    # به‌روزرسانی کامل دیتا از پشتیبان MySQL (خروجی mysqldump) — نسخهٔ ۶.۲۲
-    # این حالت باید روی MySQL اجرا شود؛ اگر کاربر -DbEngine نداده، mysql فرض می‌شود
-    if (-not $PSBoundParameters.ContainsKey('DbEngine')) { $DbEngine = "mysql" }
-    # اگر موتور فعلی .env چیز دیگری است (مثل SQLite)، فایل بازنویسی و build لازم می‌شود
+    # به‌روزرسانی کامل دیتا از پشتیبان (خروجی mysqldump) — بازنویسی ۶.۲۳
+    # موتور از .env تشخیص داده می‌شود: سرور فعلی SQLite دارد و MySQL ندارد —
+    # درون‌ریز داخلی Node پشتیبان را مستقیماً در SQLite می‌ریزد (بدون دانلود MySQL
+    # که برای IPهای ایران با 403 Oracle Export Error می‌شکند). مسیر MySQL فقط با
+    # -DbEngine mysql صریح و کلاینت موجود استفاده می‌شود.
+    if (-not $PSBoundParameters.ContainsKey('DbEngine')) {
+      $DbEngine = "sqlite"
+      $envPath = Join-Path $InstallDir ".env"
+      if (Test-Path $envPath) {
+        $rawEnv = Get-Content $envPath -Raw -ErrorAction SilentlyContinue
+        $mDb = [regex]::Match($rawEnv, 'DATABASE_URL\s*=\s*"?([^"\r\n]+)"?')
+        if ($mDb.Success -and $mDb.Groups[1].Value -match '^(mysql|mariadb)://') { $DbEngine = "mysql" }
+      }
+    }
+    # اگر موتور فعلی .env چیز دیگری است، فایل بازنویسی و build لازم می‌شود
     $needBuild = -not (Test-EnvMatches)
     if ($needBuild) {
-      Write-Warn2 "فایل .env با MySQL هم‌خوان نیست — به MySQL تغییر می‌کند"
+      Write-Warn2 "فایل .env با موتور $DbEngine هم‌خوان نیست — بازنویسی می‌شود (build مجدد لازم است)"
       Write-DotEnv
     }
     Get-Source
     Install-Dependencies
-    Invoke-SqlImport -NeedBuild $needBuild
+    if ($DbEngine -ne "mysql") {
+      # اطمینان از به‌روز بودن client و ساختار جداول SQLite پیش از درون‌ریزی
+      Push-Location $InstallDir
+      Invoke-Native { npx prisma generate 2>&1 | Out-Null }
+      if ($LASTEXITCODE -ne 0) { Write-Warn2 "prisma generate ناموفق بود — ادامه با client موجود" }
+      Invoke-Native { npx prisma db push --accept-data-loss 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray } }
+      Pop-Location
+    }
+    Invoke-SqlFileImport -SqlFileRaw $SqlFile -KeepAppStopped:$needBuild
+    if ($needBuild) { Invoke-Build; Start-App }
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "rahe-zendegi",
-  "version": "6.22.0",
+  "version": "6.23.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -16,6 +16,7 @@
     "db:import:mysql": "tsx prisma/import-sqlite-to-mysql.mts",
     "seed": "tsx prisma/seed.ts",
     "seed:admin": "tsx prisma/seed-admin.mts",
+    "import:mysqldump": "node scripts/import-mysqldump.mjs",
     "postinstall": "node prisma/fix-zero-dates-postinstall.mjs"
   },
   "dependencies": {

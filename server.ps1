@@ -1,5 +1,5 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار یک‌فرمانی روی سرور ویندوزی (نسخه ۶.۲۰)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار یک‌فرمانی روی سرور ویندوزی (نسخه ۶.۲۳)
 #  برای ویندوز سرور ۲۰۲۵ (و ۲۰۱۶ به بعد) — PowerShell را «به‌صورت Administrator» باز کنید:
 #
 #    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sjalilvand/tekno/main/server.ps1" -OutFile "$env:TEMP\server.ps1"
@@ -17,15 +17,16 @@
 #
 #  انتقال دیتا از پشتیبان MySQL (خروجی mysqldump مثل app2_backup_202611031659.sql):
 #    powershell -File server.ps1 -Port 8089 -SqlFile "C:\rahe_zendegi\app2_backup_202611031659.sql"
-#  در این حالت MySQL به‌طور خودکار نصب می‌شود (سرویس RaheZendegiDB، فقط localhost)
-#  و بعد از استقرار، دیتای پشتیبان کامل وارد می‌شود.
-#  به‌روزرسانی‌های بعدی دیتا فقط:
+#  از نسخهٔ ۶.۲۳ این کار با درون‌ریز جریانی داخلی Node انجام می‌شود — بدون نصب MySQL،
+#  بدون دانلود بستهٔ دیتابیس (که برای IPهای ایران با خطای 403 Oracle Export Error
+#  می‌شکند) و مستقیماً در SQLite سامانه. به‌روزرسانی‌های بعدی دیتا فقط:
 #    cd C:\rahe_zendegi\app; .\deploy.ps1 -Mode sqlimport -SqlFile "مسیر پشتیبان جدید"
 # =====================================================================
 param(
   [int]$Port = 8089,
 
-  # مسیر فایل پشتیبان MySQL (.sql) — اگر داده شود، MySQL نصب و دیتای پشتیبان کامل وارد می‌شود
+  # مسیر فایل پشتیبان MySQL (.sql خروجی mysqldump) — با درون‌ریز جریانی داخلی Node
+  # مستقیماً در SQLite سامانه می‌ریزد؛ بدون نصب MySQL و بدون دانلود بستهٔ دیتابیس
   [string]$SqlFile = "",
 
   [string]$InstallDir = "D:\Projects\rahe_zendegi\app",
@@ -208,173 +209,22 @@ if (-not (Test-Path (Join-Path $InstallDir ".git"))) {
   Write-Ok "مخزن از قبل در $InstallDir موجود است"
 }
 
-# ------------------------------------------------------------- ۳.۵) دیتابیس MySQL + وارد کردن پشتیبان — وقتی -SqlFile داده شده
-function Escape-SqlLiteral {
-  param([string]$s)
-  return $s.Replace('\','\\').Replace("'","''")
-}
-
-function Wait-DatabaseReady {
-  param([string]$MysqlExe, [string]$Pass, [bool]$SkipPass)
-  for ($i = 1; $i -le 60; $i++) {
-    $a = @("--no-defaults","-u","root")
-    if (-not $SkipPass) { $a += "-p$Pass" }
-    $a += @("-e","SELECT 1")
-    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    & $MysqlExe @a 2>$null | Out-Null
-    $code = $LASTEXITCODE
-    $ErrorActionPreference = $prev
-    if ($code -eq 0) { return $true }
-    Start-Sleep -Seconds 2
-  }
-  return $false
-}
-
-function Invoke-DbSetupQuery {
-  param([string]$MysqlExe, [string]$Pass, [bool]$SkipPass, [string]$Query)
-  $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-  $a = @("--no-defaults","-u","root")
-  if (-not $SkipPass) { $a += "-p$Pass" }
-  $a += @("-e", $Query)
-  & $MysqlExe @a 2>&1 | Out-Null
-  $code = $LASTEXITCODE
-  $ErrorActionPreference = $prev
-  return $code -eq 0
-}
-
-function Install-DatabaseServer {
-  $dbHome    = Join-Path (Split-Path $InstallDir -Parent) "mysql"
-  $serverDir = Join-Path $dbHome "server"
-  $binDir    = Join-Path $serverDir "bin"
-  $dbDataDir = Join-Path $dbHome "data"
-  $iniFile   = Join-Path $dbHome "my.ini"
-
-  Write-Step "آماده‌سازی دیتابیس MySQL (سرویس RaheZendegiDB — پورت 3306، فقط localhost)"
-
-  $svc = Get-Service -Name "RaheZendegiDB" -ErrorAction SilentlyContinue
-  if ($svc) {
-    if ($svc.Status -ne "Running") { Start-Service -Name "RaheZendegiDB" -ErrorAction SilentlyContinue; Start-Sleep -Seconds 3 }
-    Write-Ok "سرویس RaheZendegiDB از قبل نصب است (وضعیت: $($svc.Status))"
-    return
-  }
-  $portBusy = Get-NetTCPConnection -LocalPort 3306 -State Listen -ErrorAction SilentlyContinue
-  if ($portBusy) {
-    Write-Fail "پورت 3306 اشغال است (MySQL/MariaDB دیگری روی سرور نصب است) — یا آن سرویس را حذف کنید یا مشخصاتش را با پارامترهای Mysql* به deploy.ps1 بدهید"
-  }
-
-  # انتخاب بستهٔ نصب — zip محلی → دانلود MySQL 8.0 → دانلود MariaDB 11.4 (جایگزین)
-  $pkg = ""; $kind = ""
-  $localMysql = Join-Path $dbHome "mysql-server.zip"
-  $localMaria = Join-Path $dbHome "mariadb-server.zip"
-  if (Test-Path $localMysql) { $pkg = $localMysql; $kind = "mysql" }
-  elseif (Test-Path $localMaria) { $pkg = $localMaria; $kind = "mariadb" }
-  else {
-    New-Item -ItemType Directory -Force -Path $dbHome | Out-Null
-    $candidates = @(
-      @{ kind = "mysql";   url = "https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-8.0.46-winx64.zip"; out = $localMysql },
-      @{ kind = "mysql";   url = "https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.46-winx64.zip"; out = $localMysql },
-      @{ kind = "mariadb"; url = "https://archive.mariadb.org/mariadb-11.4.7/winx64-packages/mariadb-11.4.7-winx64.zip"; out = $localMaria }
-    )
-    foreach ($c in $candidates) {
-      Write-Host "  دانلود بستهٔ دیتابیس ($($c.kind)) — ۱۰۰ تا ۲۵۰ مگابایت…" -ForegroundColor DarkGray
-      $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-      Invoke-WebRequest -UseBasicParsing -Uri $c.url -OutFile $c.out -TimeoutSec 3600 2>$null
-      $ErrorActionPreference = $prev
-      if ((Test-Path $c.out) -and ((Get-Item $c.out).Length -gt 50MB)) { $pkg = $c.out; $kind = $c.kind; break }
-      if (Test-Path $c.out) { Remove-Item $c.out -Force -ErrorAction SilentlyContinue }
-      Write-Warn2 "دانلود از $($c.url) ناموفق بود — جایگزین تلاش می‌شود…"
-    }
-    if (-not $pkg) {
-      Write-Fail "دانلود MySQL/MariaDB ممکن نشد — بستهٔ zip سرور دیتابیس را دستی دانلود کنید و در مسیر $localMysql کپی کنید و اسکریپت را دوباره اجرا کنید (خودکار استفاده می‌شود)"
-    }
-  }
-  Write-Ok "بستهٔ دیتابیس: $pkg ($([Math]::Round((Get-Item $pkg).Length/1MB)) مگابایت — $kind)"
-
-  # استخراج — tar.exe ویندوز سرور ۲۰۲۵ zip را می‌فهمد؛ در نبودش Expand-Archive
-  New-Item -ItemType Directory -Force -Path "$dbHome\extract" | Out-Null
-  Write-Host "  استخراج بسته (۱ تا ۳ دقیقه) …" -ForegroundColor DarkGray
-  $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-  & tar.exe -xf $pkg -C "$dbHome\extract" 2>$null
-  $tarCode = $LASTEXITCODE
-  $ErrorActionPreference = $prev
-  if ($tarCode -ne 0) { try { Expand-Archive -Path $pkg -DestinationPath "$dbHome\extract" -Force } catch {} }
-
-  $srcDir = $null
-  Get-ChildItem "$dbHome\extract" -Directory | ForEach-Object {
-    if (-not $srcDir -and (Test-Path (Join-Path $_.FullName "bin\mysqld.exe"))) { $srcDir = $_.FullName }
-  }
-  if (-not $srcDir) { Write-Fail "بعد از استخراج، mysqld.exe پیدا نشد — بستهٔ zip معتبر نیست" }
-  if (Test-Path $serverDir) { Remove-Item -Recurse -Force $serverDir -ErrorAction SilentlyContinue }
-  Move-Item $srcDir $serverDir
-  Remove-Item -Recurse -Force "$dbHome\extract" -ErrorAction SilentlyContinue
-  Write-Ok "سرور دیتابیس: $serverDir"
-
-  # my.ini — sql_mode خالی برای سازگاری با تاریخ‌های صفر legacy پشتیبان‌های قدیمی
-  $ini = @"
-[mysqld]
-basedir=$($serverDir -replace '\\','/')
-datadir=$($dbDataDir -replace '\\','/')
-port=3306
-bind-address=127.0.0.1
-sql_mode=
-max_allowed_packet=1G
-character-set-server=utf8mb4
-collation-server=utf8mb4_general_ci
-"@
-  [System.IO.File]::WriteAllText($iniFile, $ini, (New-Object System.Text.UTF8Encoding($false)))
-  Write-Ok "پیکربندی: $iniFile"
-
-  $mysqlExe = Join-Path $binDir "mysql.exe"
-  $isMaria  = Test-Path (Join-Path $binDir "mysql_install_db.exe")
-
-  if ($isMaria) {
-    Write-Host "  راه‌اندازی اولیهٔ MariaDB …" -ForegroundColor DarkGray
-    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    & (Join-Path $binDir "mysql_install_db.exe") "--datadir=$dbDataDir" "--password=$MysqlDbPass" "--service=RaheZendegiDB" "--port=3306" 2>&1 | Out-Null
-    $ErrorActionPreference = $prev
-    if (-not (Get-Service -Name "RaheZendegiDB" -ErrorAction SilentlyContinue)) { Write-Fail "ساخت دیتای اولیهٔ MariaDB ناموفق بود — لاگ‌ها را بررسی کنید" }
-  } else {
-    Write-Host "  راه‌اندازی اولیهٔ MySQL (initialize) — یک دقیقه…" -ForegroundColor DarkGray
-    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    & (Join-Path $binDir "mysqld.exe") "--defaults-file=$iniFile" "--initialize-insecure" 2>&1 | Out-Null
-    $initCode = $LASTEXITCODE
-    $ErrorActionPreference = $prev
-    if ($initCode -ne 0) { Write-Fail "initialize دیتابیس MySQL ناموفق بود (کد $initCode)" }
-    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    & (Join-Path $binDir "mysqld.exe") "--install" "RaheZendegiDB" "--defaults-file=$iniFile" 2>&1 | Out-Null
-    $ErrorActionPreference = $prev
-  }
-  Start-Service -Name "RaheZendegiDB" -ErrorAction SilentlyContinue
-
-  Write-Host "  در انتظار آماده شدن دیتابیس …" -ForegroundColor DarkGray
-  $ready = $false
-  if ($isMaria) { $ready = Wait-DatabaseReady -MysqlExe $mysqlExe -Pass $MysqlDbPass -SkipPass $false }
-  else { $ready = Wait-DatabaseReady -MysqlExe $mysqlExe -Pass $MysqlDbPass -SkipPass $true }
-  if (-not $ready) { Write-Fail "دیتابیس بالا نیامد — سرویس RaheZendegiDB و پوشهٔ $dbDataDir را بررسی کنید" }
-
-  if (-not $isMaria) {
-    $esc = Escape-SqlLiteral $MysqlDbPass
-    $ok = Invoke-DbSetupQuery -MysqlExe $mysqlExe -Pass "" -SkipPass $true -Query "ALTER USER 'root'@'localhost' IDENTIFIED BY '$esc'; CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '$esc'; GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION; GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION; FLUSH PRIVILEGES;"
-    if (-not $ok) { Write-Fail "تنظیم رمز root دیتابیس ناموفق بود" }
-  }
-  $okDb = Invoke-DbSetupQuery -MysqlExe $mysqlExe -Pass $MysqlDbPass -SkipPass $false -Query "CREATE DATABASE IF NOT EXISTS ``rahe_zendegi`` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
-  if (-not $okDb) { Write-Fail "ساخت دیتابیس rahe_zendegi ناموفق بود" }
-  Write-Ok "دیتابیس آماده است — سرویس RaheZendegiDB (پورت 3306، فقط روی خود سرور)"
-}
-
+# ------------------------------------------------------------- ۳.۵) فایل پشتیبان — فقط اعتبارسنجی مسیر (۶.۲۳)
+# از نسخهٔ ۶.۲۳ هیچ MySQL نصب یا دانلود نمی‌شود — درون‌ریز داخلی Node پشتیبان
+# mysqldump را مستقیماً در SQLite سامانه می‌ریزد (دانلود بستهٔ Oracle برای IPهای
+# ایران با 403 می‌شکند و روی این سرور هم MySQL وجود ندارد).
 if ($SqlFile) {
+  Write-Step "بررسی فایل پشتیبان"
   $sqlResolved = Resolve-Path $SqlFile -ErrorAction SilentlyContinue
   if (-not $sqlResolved) { Write-Fail "فایل پشتیبان پیدا نشد: $SqlFile" }
   $SqlFile = $sqlResolved.Path
-  $MysqlDbPass = $MysqlPassword
-  if (-not $MysqlDbPass) { $MysqlDbPass = "RaheZendegi2026" }
-  Install-DatabaseServer
+  $sizeGB = [Math]::Round((Get-Item $SqlFile).Length / 1GB, 2)
+  Write-Ok "فایل پشتیبان: $SqlFile ($sizeGB گیگابایت) — پس از استقرار، دیتا با درون‌ریز داخلی Node وارد SQLite می‌شود (بدون MySQL)"
 }
 
-# ------------------------------------------------------------- ۴) استقرار با deploy.ps1 (install + اجرای خودکار)
+# ------------------------------------------------------------- ۴) استقرار با deploy.ps1 (install + درون‌ریزی پشتیبان + اجرای خودکار)
 Write-Step "استقرار سامانه روی پورت $Port (نصب وابستگی‌ها + دیتابیس + build + اجرا)"
 $deployDbEngine = $DbEngine
-if ($SqlFile) { $deployDbEngine = "mysql" }
 $deployArgs = @(
   "-Mode","install",
   "-AppPort","$Port",
@@ -383,7 +233,11 @@ $deployArgs = @(
   "-DataDir",$DataDir,
   "-AutoStart"
 )
+# پشتیبان mysqldump مستقیماً داخل همان اجرا درون‌ریزی می‌شود (بدون MySQL — نسخهٔ ۶.۲۳)
+if ($SqlFile) { $deployArgs += @("-SqlFile","$SqlFile") }
 if ($deployDbEngine -eq "mysql") {
+  $MysqlDbPass = $MysqlPassword
+  if (-not $MysqlDbPass) { $MysqlDbPass = "RaheZendegi2026" }
   $deployArgs += @(
     "-MysqlHost",$MysqlHost,
     "-MysqlPort","$MysqlPort",
@@ -402,21 +256,6 @@ $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 $deployOk = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = $prevEAP
 
-# ------------------------------------------------------------- ۴.۵) وارد کردن دیتای پشتیبان — وقتی -SqlFile داده شده
-$importOk = $true
-if ($SqlFile) {
-  if ($deployOk) {
-    Write-Step "انتقال دیتای پشتیبان به MySQL — بسته به حجم فایل چند دقیقه، پنجره را نبندید"
-    $prevEAP2 = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$deployScript" -Mode sqlimport -SqlFile "$SqlFile" -InstallDir "$InstallDir" -DataDir "$DataDir" -MysqlPassword "$MysqlDbPass" -AppPort "$Port"
-    $importOk = ($LASTEXITCODE -eq 0)
-    $ErrorActionPreference = $prevEAP2
-  } else {
-    Write-Warn2 "استقرار ناموفق بود — انتقال پشتیبان انجام نشد؛ بعد از رفع مشکل دوباره اجرا کنید"
-    $importOk = $false
-  }
-}
-
 # ------------------------------------------------------------- ۵) بنر پایانی
 Write-Host ""
 Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
@@ -427,8 +266,10 @@ try {
 } catch {}
 Write-Host "  ورود پیش‌فرض:  admin / 123456  (پس از اولین ورود رمز را عوض کنید)" -ForegroundColor Magenta
 if ($SqlFile) {
-  if ($importOk) { Write-Host "  دیتابیس: MySQL (سرویس RaheZendegiDB) — دیتای پشتیبان کامل وارد شد" -ForegroundColor DarkGray }
-  else { Write-Host "  دیتابیس: MySQL نصب شد ولی انتقال پشتیبان کامل نشد — دوباره اجرا کنید" -ForegroundColor Yellow }
+  if ($deployOk) { Write-Host "  دیتابیس: SQLite — دیتای پشتیبان کامل وارد شد (درون‌ریز داخلی Node، بدون MySQL)" -ForegroundColor DarkGray }
+  else { Write-Host "  دیتابیس: درون‌ریزی پشتیبان کامل نشد — پیام‌های بالا را بررسی و دوباره اجرا کنید" -ForegroundColor Yellow }
+} else {
+  Write-Host "  دیتابیس: SQLite در $DataDir" -ForegroundColor DarkGray
 }
 Write-Host "  به‌روزرسانی‌های بعدی دیتا:  cd $InstallDir; .\deploy.ps1 -Mode sqlimport -SqlFile 'مسیر-پشتیبان-جدید'" -ForegroundColor DarkGray
 Write-Host "  پس از ری‌استارت سرور، سامانه خودکار بالا می‌آید (Task Scheduler: RaheZendegi)" -ForegroundColor DarkGray
