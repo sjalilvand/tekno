@@ -80,7 +80,7 @@ param(
 # ------------------------------------------------------------- ابزارها
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
-$PSStyle = $null  # سازگاری با PowerShell 5.1
+try { $PSStyle = $null } catch {}  # سازگاری با PowerShell 5.1 — در pwsh 7 فقط‌خواندنی است
 
 # مهم: اگر از اجرای قبلی NODE_ENV=production در همین سشن PowerShell مانده باشد،
 # npm آن را بهانهٔ حذف وابستگی‌های dev (tsx، typescript، tailwindcss و…) می‌گیرد
