@@ -37,10 +37,10 @@
 #  نمونهٔ اجرا (PowerShell):
 #    .\deploy.ps1 -Mode install -DbEngine mysql -DataDir "D:\Projects\rahe_zendegi\data"
 #
-#  حالت‌ها:  install | update | start | stop | restart | status | import
+#  حالت‌ها:  install | update | start | stop | restart | status | import | sqlimport
 # =====================================================================
 param(
-  [ValidateSet("install", "update", "start", "stop", "restart", "status", "import")]
+  [ValidateSet("install", "update", "start", "stop", "restart", "status", "import", "sqlimport")]
   [string]$Mode = "install",
 
   [string]$InstallDir = "D:\Projects\rahe_zendegi\app",
@@ -63,6 +63,11 @@ param(
   [string]$MysqlDatabase = "rahe_zendegi",
 
   [int]$AppPort = 3000,
+
+  # حالت sqlimport — مسیر فایل پشتیبان MySQL (.sql خروجی mysqldump)
+  [string]$SqlFile = "",
+  # پوشهٔ bin کلاینت MySQL — خالی = تشخیص خودکار
+  [string]$MysqlBinDir = "",
 
   # انتقال پشتیبان app.sqlite به MySQL پس از استقرار
   [switch]$ImportSqlite,
@@ -489,6 +494,146 @@ function Invoke-SeedAdmin {
   Write-Ok "حساب‌های admin / manager / consultant با رمز 123456 آماده‌اند"
 }
 
+# ------------------------------------------------------------- به‌روزرسانی دیتا از پشتیبان MySQL (نسخهٔ ۶.۲۲)
+# کاربر هر وقت پشتیبان جدید گرفت (مثل app2_backup_202611031659.sql خروجی mysqldump)
+# با یک دستور دیتای سرور را کامل به‌روز می‌کند:
+#   .\deploy.ps1 -Mode sqlimport -SqlFile "C:\rahe_zendegi\app2_backup_202611031659.sql"
+# مراحل: توقف سامانه → بازسازی دیتابیس → restore کامل پشتیبان → تأیید شمارش‌ها
+#   → پاک‌سازی تاریخ صفر → همگام‌سازی اسکیما → seed مدیر → اجرای مجدد
+
+# یافتن کلاینت mysql.exe — مسیر صریح یا مکان‌های شناخته‌شده
+function Find-MysqlClient {
+  if ($MysqlBinDir) {
+    $exe = Join-Path $MysqlBinDir "mysql.exe"
+    if (Test-Path $exe) { return $exe }
+    Write-Fail "mysql.exe در $MysqlBinDir پیدا نشد"
+  }
+  $cands = @(
+    (Join-Path (Split-Path $InstallDir -Parent) "mysql\server\bin\mysql.exe"),
+    (Join-Path (Split-Path $InstallDir -Parent) "mysql\mysql\bin\mysql.exe")
+  )
+  try { $cmd = Get-Command mysql.exe -ErrorAction SilentlyContinue; if ($cmd) { $cands += $cmd.Source } } catch {}
+  $cands += (Get-ChildItem "C:\Program Files\MySQL\*\bin\mysql.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+  $cands += (Get-ChildItem "C:\Program Files\MariaDB*\bin\mysql.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+  foreach ($c in $cands) { if ($c -and (Test-Path $c)) { return $c } }
+  return $null
+}
+
+# اجرای یک دستور SQL با کلاینت mysql (رمز از متغیر محیطی MYSQL_PWD — نه خط فرمان)
+function Invoke-MysqlQuery {
+  param([string]$ClientExe, [string]$Query, [string]$Db = "")
+  $env:MYSQL_PWD = $MysqlPassword
+  try {
+    $qArgs = @("--no-defaults","--default-character-set=utf8mb4","-h",$MysqlHost,"-P","$MysqlPort","-u",$MysqlUser,"-N","-e",$Query)
+    if ($Db) { $qArgs += $Db }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & $ClientExe @qArgs
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    return $code -eq 0
+  } finally { Remove-Item Env:MYSQL_PWD -ErrorAction SilentlyContinue }
+}
+
+# بررسی سرِ پشتیبان — اگر dump با «USE/CREATE DATABASE» به دیتابیس دیگری اشاره کند، واضح بگویم
+function Test-SqlDumpTarget {
+  param([string]$File)
+  try {
+    $fs = [System.IO.File]::OpenRead($File)
+    $len = [Math]::Min(262144, $fs.Length)
+    $buf = New-Object byte[] $len
+    [void]$fs.Read($buf, 0, $len); $fs.Close()
+    $head = [System.Text.Encoding]::UTF8.GetString($buf)
+    $m = [regex]::Match($head, '(?im)^\s*USE\s+`?([A-Za-z0-9_\-]+)`?\s*;')
+    if (-not $m.Success) { $m = [regex]::Match($head, '(?im)CREATE\s+DATABASE\s+(IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_\-]+)`?') }
+    if (-not $m.Success) { $m = [regex]::Match($head, '(?im)CREATE\s+DATABASE[^;\r\n]*`([A-Za-z0-9_\-]+)`') }
+    if ($m.Success) {
+      $target = if ($m.Groups.Count -gt 2 -and $m.Groups[2].Value) { $m.Groups[2].Value } else { $m.Groups[1].Value }
+      if ($target -and ($target -ne $MysqlDatabase)) {
+        Write-Fail "پشتیبان به دیتابیس «$target» اشاره می‌کند ولی سامانه به «$MysqlDatabase» وصل است — پشتیبان را بدون --databases و بدون USE دوباره بگیرید یا -MysqlDatabase $target بدهید"
+      }
+    }
+  } catch {}
+}
+
+function Invoke-SqlImport {
+  param([bool]$NeedBuild = $false)
+  Write-Step "به‌روزرسانی دیتا از پشتیبان SQL"
+  if (-not $SqlFile) { Write-Fail "مسیر فایل پشتیبان را بدهید؛ مثلاً:  -SqlFile 'C:\rahe_zendegi\app2_backup_202611031659.sql'" }
+  $sqlPath = Resolve-Path $SqlFile -ErrorAction SilentlyContinue
+  if (-not $sqlPath) { Write-Fail "فایل پشتیبان پیدا نشد: $SqlFile" }
+  $sqlPath = $sqlPath.Path
+  $sizeGB = [Math]::Round((Get-Item $sqlPath).Length / 1GB, 2)
+  Write-Ok "فایل پشتیبان: $sqlPath ($sizeGB گیگابایت)"
+
+  $mysqlExe = Find-MysqlClient
+  if (-not $mysqlExe) {
+    Write-Fail "کلاینت mysql پیدا نشد — اگر MySQL با server.ps1 نصب شده باشد در $InstallDir..\mysql\server\bin است؛ یا مسیر را با -MysqlBinDir بدهید"
+  }
+  Write-Ok "کلاینت: $mysqlExe"
+  Test-SqlDumpTarget -File $sqlPath
+
+  # سامانه باید خاموش باشد تا اتصال‌ها DROP DATABASE را قفل نکنند
+  Stop-App
+
+  Write-Host "  بازسازی دیتابیس «$MysqlDatabase» …" -ForegroundColor DarkGray
+  [void](Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SET GLOBAL sql_mode = ''; SET GLOBAL max_allowed_packet = 1073741824;")
+  $ok = Invoke-MysqlQuery -ClientExe $mysqlExe -Query "DROP DATABASE IF EXISTS ``$MysqlDatabase``; CREATE DATABASE ``$MysqlDatabase`` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+  if (-not $ok) { Write-Fail "بازسازی دیتابیس ناموفق بود — مشخصات اتصال MySQL در .env را بررسی کنید" }
+
+  Write-Host "  بازگردانی کامل پشتیبان — بسته به حجم فایل چند دقیقه طول می‌کشد، پنجره را نبندید…" -ForegroundColor Cyan
+  $errLog = Join-Path $InstallDir "sqlimport.err.log"
+  $outLog = Join-Path $InstallDir "sqlimport.out.log"
+  $env:MYSQL_PWD = $MysqlPassword
+  try {
+    $rArgs = @("--no-defaults","--default-character-set=utf8mb4","--max-allowed-packet=1G","-h",$MysqlHost,"-P","$MysqlPort","-u",$MysqlUser,$MysqlDatabase)
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $proc = Start-Process -FilePath $mysqlExe -ArgumentList $rArgs -RedirectStandardInput $sqlPath -RedirectStandardOutput $outLog -RedirectStandardError $errLog -NoNewWindow -Wait -PassThru
+    $code = $proc.ExitCode
+    $ErrorActionPreference = $prev
+  } finally { Remove-Item Env:MYSQL_PWD -ErrorAction SilentlyContinue }
+  if ($code -ne 0) {
+    Write-Warn2 "بازگردانی با خطا مواجه شد (کد $code) — آخرین خطاها:"
+    if (Test-Path $errLog) { Get-Content $errLog -Tail 12 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red } }
+    Write-Fail "بازگردانی پشتیبان ناموفق بود — log: $errLog"
+  }
+  Write-Ok "بازگردانی پشتیبان کامل شد"
+
+  # تأیید شمارش‌ها — تا کاربر ببیند دیتا واقعاً آمده
+  Write-Step "تأیید داده‌های وارد‌شده"
+  $tables = 0; $users = -1; $referrs = -1; $provinces = -1
+  try {
+    $t = Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$MysqlDatabase';"
+    if ($t) { $tables = [int]((Write-Output $t | Select-Object -Last 1)) }
+  } catch {}
+  if (Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SELECT 1 FROM information_schema.tables WHERE table_schema = '$MysqlDatabase' AND table_name = 'Users';" | Out-Null) {
+    $u = Invoke-MysqlQuery -ClientExe $mysqlExe -Db $MysqlDatabase -Query "SELECT COUNT(*) FROM Users;"
+    if ($u) { $users = [int]($u | Select-Object -Last 1) }
+  }
+  if (Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SELECT 1 FROM information_schema.tables WHERE table_schema = '$MysqlDatabase' AND table_name = 'Referrs';" | Out-Null) {
+    $r = Invoke-MysqlQuery -ClientExe $mysqlExe -Db $MysqlDatabase -Query "SELECT COUNT(*) FROM Referrs;"
+    if ($r) { $referrs = [int]($r | Select-Object -Last 1) }
+  }
+  Write-Host "  ✔ جدول‌ها: $tables | کاربران: $users | ارجاعات: $referrs" -ForegroundColor Green
+  if ($users -eq -1 -or $users -eq 0) {
+    Write-Warn2 "جدول Users پیدا نشد یا خالی است — اگر این پشتیبان از سامانهٔ قدیمی است، ساختارش با سامانهٔ جدید یکی نیست؛ جدول‌های سامانه ساخته می‌شوند ولی دادهٔ قدیمی خودکار جابه‌جا نمی‌شود"
+  }
+
+  # پاک‌سازی تاریخ صفر + همگام‌سازی اسکیمای جدید (جدول‌های تازهٔ ۶.۱۸ و بعد)
+  Invoke-MysqlSchemaSync
+  Invoke-SeedAdmin
+
+  # اگر موتور دیتابیس تازه از SQLite عوض شده، client داخل نسخهٔ تولیدی باید از نو ساخته شود
+  if ($NeedBuild) {
+    Write-Warn2 "موتور دیتابیس از SQLite به MySQL تغییر کرد — build مجدد لازم است"
+    Invoke-Build
+  } else {
+    Write-Ok "کد و نسخهٔ تولیدی بدون تغییر — build لازم نیست"
+  }
+  Start-App
+  Write-Host ""
+  Write-Host "  ✔ دیتای سامانه با پشتیبان جدید به‌روز شد — http://localhost:$AppPort" -ForegroundColor Green
+}
+
 # ------------------------------------------------------------- ساخت و اجرا
 function Invoke-Build {
   if ($SkipBuild) { Write-Warn2 "ساخت رد شد (-SkipBuild)"; return }
@@ -687,5 +832,19 @@ switch ($Mode) {
     Invoke-SeedAdmin
     Write-Host ""
     Write-Host "  مرحلهٔ بعد: .\deploy.ps1 -Mode update -DbEngine mysql  (ساخت و اجرای مجدد سامانه)" -ForegroundColor Magenta
+  }
+  "sqlimport" {
+    # به‌روزرسانی کامل دیتا از پشتیبان MySQL (خروجی mysqldump) — نسخهٔ ۶.۲۲
+    # این حالت باید روی MySQL اجرا شود؛ اگر کاربر -DbEngine نداده، mysql فرض می‌شود
+    if (-not $PSBoundParameters.ContainsKey('DbEngine')) { $DbEngine = "mysql" }
+    # اگر موتور فعلی .env چیز دیگری است (مثل SQLite)، فایل بازنویسی و build لازم می‌شود
+    $needBuild = -not (Test-EnvMatches)
+    if ($needBuild) {
+      Write-Warn2 "فایل .env با MySQL هم‌خوان نیست — به MySQL تغییر می‌کند"
+      Write-DotEnv
+    }
+    Get-Source
+    Install-Dependencies
+    Invoke-SqlImport -NeedBuild $needBuild
   }
 }
