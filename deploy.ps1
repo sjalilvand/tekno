@@ -89,6 +89,9 @@ if (-not $DataDir) { $DataDir = Join-Path (Split-Path $InstallDir -Parent) "data
 # مهم: اگر از اجرای قبلی NODE_ENV=production در همین سشن PowerShell مانده باشد،
 # npm آن را بهانهٔ حذف وابستگی‌های dev (tsx، typescript، tailwindcss و…) می‌گیرد
 Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue
+# DATABASE_URL همیشه فقط از .env خوانده شود — باقی‌ماندهٔ متغیر محیطی در سشن‌های
+# قدیمی می‌تواند prisma db push را به دیتابیس اشتباه بفرستد
+Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------- مشخصات MySQL از .env قبلی
 # اگر .env نصب قبلی یک رشتهٔ اتصال mysql/mariadb دارد، هر پارامتری که کاربر
@@ -531,10 +534,26 @@ function Invoke-MysqlQuery {
     $qArgs = @("--no-defaults","--default-character-set=utf8mb4","-h",$MysqlHost,"-P","$MysqlPort","-u",$MysqlUser,"-N","-e",$Query)
     if ($Db) { $qArgs += $Db }
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    & $ClientExe @qArgs
+    & $ClientExe @qArgs | Out-Null
     $code = $LASTEXITCODE
     $ErrorActionPreference = $prev
     return $code -eq 0
+  } finally { Remove-Item Env:MYSQL_PWD -ErrorAction SilentlyContinue }
+}
+
+# کوئری تک‌مقداری — خروجی واقعی mysql را برمی‌گرداند (empty = خطا/خالی)
+function Get-MysqlScalar {
+  param([string]$ClientExe, [string]$Query, [string]$Db = "")
+  $env:MYSQL_PWD = $MysqlPassword
+  try {
+    $qArgs = @("--no-defaults","--default-character-set=utf8mb4","-h",$MysqlHost,"-P","$MysqlPort","-u",$MysqlUser,"-N","-B","-e",$Query)
+    if ($Db) { $qArgs += $Db }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $out = & $ClientExe @qArgs
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($code -ne 0) { return "" }
+    return (($out | Out-String).Trim())
   } finally { Remove-Item Env:MYSQL_PWD -ErrorAction SilentlyContinue }
 }
 
@@ -604,19 +623,13 @@ function Invoke-SqlImport {
 
   # تأیید شمارش‌ها — تا کاربر ببیند دیتا واقعاً آمده
   Write-Step "تأیید داده‌های وارد‌شده"
-  $tables = 0; $users = -1; $referrs = -1; $provinces = -1
-  try {
-    $t = Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$MysqlDatabase';"
-    if ($t) { $tables = [int]((Write-Output $t | Select-Object -Last 1)) }
-  } catch {}
-  if (Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SELECT 1 FROM information_schema.tables WHERE table_schema = '$MysqlDatabase' AND table_name = 'Users';" | Out-Null) {
-    $u = Invoke-MysqlQuery -ClientExe $mysqlExe -Db $MysqlDatabase -Query "SELECT COUNT(*) FROM Users;"
-    if ($u) { $users = [int]($u | Select-Object -Last 1) }
-  }
-  if (Invoke-MysqlQuery -ClientExe $mysqlExe -Query "SELECT 1 FROM information_schema.tables WHERE table_schema = '$MysqlDatabase' AND table_name = 'Referrs';" | Out-Null) {
-    $r = Invoke-MysqlQuery -ClientExe $mysqlExe -Db $MysqlDatabase -Query "SELECT COUNT(*) FROM Referrs;"
-    if ($r) { $referrs = [int]($r | Select-Object -Last 1) }
-  }
+  $tables = 0; $users = -1; $referrs = -1
+  $t = Get-MysqlScalar -ClientExe $mysqlExe -Query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '$MysqlDatabase';"
+  if ($t) { try { $tables = [int]$t } catch {} }
+  $u = Get-MysqlScalar -ClientExe $mysqlExe -Db $MysqlDatabase -Query "SELECT COUNT(*) FROM Users;"
+  if ($u -ne "") { try { $users = [int]$u } catch {} }
+  $r = Get-MysqlScalar -ClientExe $mysqlExe -Db $MysqlDatabase -Query "SELECT COUNT(*) FROM Referrs;"
+  if ($r -ne "") { try { $referrs = [int]$r } catch {} }
   Write-Host "  ✔ جدول‌ها: $tables | کاربران: $users | ارجاعات: $referrs" -ForegroundColor Green
   if ($users -eq -1 -or $users -eq 0) {
     Write-Warn2 "جدول Users پیدا نشد یا خالی است — اگر این پشتیبان از سامانهٔ قدیمی است، ساختارش با سامانهٔ جدید یکی نیست؛ جدول‌های سامانه ساخته می‌شوند ولی دادهٔ قدیمی خودکار جابه‌جا نمی‌شود"
