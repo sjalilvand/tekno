@@ -1,5 +1,10 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۱۸)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۲۰)
+#  تغییرات ۶.۲۰: حفظ پورت در حالت update — اگر -AppPort داده نشده باشد، پورت
+#  از .env قبلی خوانده می‌شود (استقرار روی سرور با پورت غیر ۳۰۰۰ دیگر با هر
+#  به‌روزرسانی به ۳۰۰۰ برنمی‌گردد) + شماره نسخهٔ بنر پایانی از package.json
+#  خوانده می‌شود + اسکریپت server.ps1 برای استقرار یک‌فرمانی روی سرور ویندوزی
+#  (نصب خودکار Git/Node + فایروال + Task Scheduler)
 #  تغییرات ۶.۱۸: پوشش کامل ۷۵ جدول سامانهٔ قدیم (۱۹ جدول باقی‌مانده به اسکیما
 #  اضافه شد) + بخش «مدیریت جدول‌ها» — مشاهده/افزودن/ویرایش/حذف رکورد همهٔ
 #  جدول‌ها فقط برای مدیر سامانه
@@ -95,6 +100,12 @@ if (Test-Path $dotenvPath) {
         if (-not $PSBoundParameters.ContainsKey('MysqlPort') -and $mEnv.Groups[4].Value) { $MysqlPort = [int]$mEnv.Groups[4].Value }
         if (-not $PSBoundParameters.ContainsKey('MysqlDatabase')) { $MysqlDatabase = $mEnv.Groups[5].Value }
       } catch {}
+    }
+    # حفظ پورت نصب قبلی — تا «-Mode update» بدون -AppPort سامانه را به پورت ۳۰۰۰
+    # برنگرداند (رفع مشکل استقرار سرور روی پورت سفارشی مثل ۸۰۸۹)
+    if (-not $PSBoundParameters.ContainsKey('AppPort')) {
+      $mPort = [regex]::Match($rawEnv, '(?m)^\s*PORT\s*=\s*"?(\d+)"?')
+      if ($mPort.Success) { $AppPort = [int]$mPort.Groups[1].Value }
     }
   }
 }
@@ -622,8 +633,13 @@ switch ($Mode) {
     Start-App
     if ($AutoStart) { Register-AutoStart }
     Write-Host ""
+    $appVersion = "۶.۲۰"
+    try {
+      $pkgJson = Get-Content (Join-Path $InstallDir "package.json") -Raw | ConvertFrom-Json
+      if ($pkgJson.version) { $appVersion = $pkgJson.version -replace '\.', '٫' }
+    } catch {}
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ ۶.۱۶" -ForegroundColor Cyan
+    Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ $appVersion" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
   }
   "update" {
