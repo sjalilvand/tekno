@@ -134,6 +134,34 @@ if ($nodeMajor -ge 18) {
 }
 if (-not (Test-Command npm)) { Write-Fail "npm یافت نشد — همراه Node.js باید نصب شود" }
 
+# ------------------------------------------------------------- ۱.۵) مسیر نصب — اگر درایو پیش‌فرض (D:) قابل نوشتن نبود، درایو سیستم
+# روی خیلی از سرورها D: درایو CD یا دیسک قفل‌شده است و ساخت پوشه با Access Denied شکست می‌خورد
+function Test-DirWritable {
+  param([string]$dir)
+  try {
+    New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
+    $t = Join-Path $dir ".rz-write-test"
+    New-Item -ItemType Directory -Force -Path $t -ErrorAction Stop | Out-Null
+    Remove-Item $t -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch { return $false }
+}
+
+Write-Step "بررسی مسیر نصب"
+$installParent = Split-Path $InstallDir -Parent
+if (Test-DirWritable $installParent) {
+  Write-Ok "مسیر نصب: $InstallDir"
+} else {
+  $sysRoot = "$env:SystemDrive\rahe_zendegi"
+  Write-Warn2 "نوشتن در $installParent ممکن نیست (درایو D: احتمالاً CD-ROM یا قفل‌شده است) — مسیر جایگزین: $sysRoot"
+  $InstallDir = Join-Path $sysRoot "app"
+  $DataDir    = Join-Path $sysRoot "data"
+  if (-not (Test-DirWritable (Split-Path $InstallDir -Parent))) {
+    Write-Fail "ساخت پوشهٔ نصب در D: و C: ممکن نشد — دسترسی دیسک سرور را بررسی کنید یا مسیر را با -InstallDir بدهید"
+  }
+  Write-Ok "مسیر نصب: $InstallDir | مسیر داده: $DataDir"
+}
+
 # ------------------------------------------------------------- ۲) فایروال ویندوز
 if (-not $SkipFirewall) {
   Write-Step "باز کردن پورت $Port در فایروال ویندوز"
@@ -153,7 +181,8 @@ Write-Step "دریافت کد سامانه از $RepoUrl"
 $cloneUrl = $RepoUrl
 if ($GithubToken) { $cloneUrl = $RepoUrl -replace '^https?://', "https://$GithubToken@" }
 if (-not (Test-Path (Join-Path $InstallDir ".git"))) {
-  New-Item -ItemType Directory -Force -Path (Split-Path $InstallDir -Parent) | Out-Null
+  try { New-Item -ItemType Directory -Force -Path (Split-Path $InstallDir -Parent) -ErrorAction Stop | Out-Null }
+  catch { Write-Fail "ساخت پوشهٔ $(Split-Path $InstallDir -Parent) ممکن نشد: $($_.Exception.Message)" }
   $cloned = $false
   foreach ($i in 1..3) {
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
