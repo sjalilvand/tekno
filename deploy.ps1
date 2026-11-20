@@ -689,8 +689,14 @@ function Start-App {
   $env:PORT = "$AppPort"
   $env:HOSTNAME = "0.0.0.0"
   $logFile = Join-Path $InstallDir "server.log"
-  $proc = Start-Process -FilePath "node" -ArgumentList "`"$server`"" -WorkingDirectory $InstallDir `
-          -WindowStyle Hidden -RedirectStandardOutput $logFile -RedirectStandardError "$InstallDir\server.err.log" -PassThru
+  try {
+    $proc = Start-Process -FilePath "node" -ArgumentList "`"$server`"" -WorkingDirectory $InstallDir `
+            -WindowStyle Hidden -RedirectStandardOutput $logFile -RedirectStandardError "$InstallDir\server.err.log" -PassThru
+  } catch {
+    # PowerShell 7 روی لینوکس -WindowStyle را پشتیبانی نمی‌کند
+    $proc = Start-Process -FilePath "node" -ArgumentList "`"$server`"" -WorkingDirectory $InstallDir `
+            -RedirectStandardOutput $logFile -RedirectStandardError "$InstallDir\server.err.log" -PassThru
+  }
   if ($null -eq $oldNodeEnv) { Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue } else { $env:NODE_ENV = $oldNodeEnv }
   if ($null -eq $oldPort)    { Remove-Item Env:PORT    -ErrorAction SilentlyContinue } else { $env:PORT    = $oldPort }
   if ($null -eq $oldHost)    { Remove-Item Env:HOSTNAME -ErrorAction SilentlyContinue } else { $env:HOSTNAME = $oldHost }
