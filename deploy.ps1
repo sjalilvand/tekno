@@ -43,8 +43,8 @@ param(
   [ValidateSet("install", "update", "start", "stop", "restart", "status", "import", "sqlimport")]
   [string]$Mode = "install",
 
-  [string]$InstallDir = "D:\Projects\rahe_zendegi\app",
-  [string]$DataDir    = "D:\Projects\rahe_zendegi\data",
+  [string]$InstallDir = "",
+  [string]$DataDir    = "",   # خالی = پوشهٔ data کنار پوشهٔ سامانه
   [string]$RepoUrl    = "https://github.com/sjalilvand/tekno.git",
   [string]$Branch     = "main",
 
@@ -81,6 +81,10 @@ param(
 $ErrorActionPreference = "Stop"
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { $PSStyle = $null } catch {}  # سازگاری با PowerShell 5.1 — در pwsh 7 فقط‌خواندنی است
+
+# مسیرهای پیش‌فرض = پوشهٔ خودِ deploy.ps1 — روی هر درایو و هر سروری (D: یا C:) درست کار می‌کند
+if (-not $InstallDir) { $InstallDir = Split-Path $PSCommandPath -Parent }
+if (-not $DataDir) { $DataDir = Join-Path (Split-Path $InstallDir -Parent) "data" }
 
 # مهم: اگر از اجرای قبلی NODE_ENV=production در همین سشن PowerShell مانده باشد،
 # npm آن را بهانهٔ حذف وابستگی‌های dev (tsx، typescript، tailwindcss و…) می‌گیرد
@@ -268,7 +272,6 @@ function Get-Source {
 function Write-DotEnv {
   Write-Step "تنظیم فایل .env"
   $envPath = Join-Path $InstallDir ".env"
-  $sqliteUrl = "file:" + ((Get-SqlitePath) -replace '\\','/')
   if ($DbEngine -eq "mysql") {
     $content = @"
 # سامانه راه زندگی — تولیدشده توسط deploy.ps1
@@ -277,6 +280,7 @@ NODE_ENV="production"
 PORT="$AppPort"
 "@
   } else {
+    $sqliteUrl = "file:" + ((Get-SqlitePath) -replace '\\','/')
     $content = @"
 # سامانه راه زندگی — تولیدشده توسط deploy.ps1
 DATABASE_URL="$sqliteUrl"
