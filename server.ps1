@@ -65,11 +65,13 @@ function Install-WithWinget {
   param([string]$Id)
   if (-not (Test-Command winget)) { return $false }
   Write-Host "  نصب با winget: $Id …" -ForegroundColor DarkGray
-  $args = @("install","--id",$Id,"-e","--accept-source-agreements","--accept-package-agreements","--silent","--disable-interactivity")
+  $wingetArgs = @("install","--id",$Id,"-e","--accept-source-agreements","--accept-package-agreements","--silent","--disable-interactivity")
   $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-  & winget @args 2>&1 | Out-Null
+  & winget @wingetArgs 2>&1 | Out-Null
+  $code = $LASTEXITCODE
   $ErrorActionPreference = $prev
-  return ($LASTEXITCODE -eq 0)
+  # ۰ = موفق | ۳۰۱۰ = موفق ولی نیاز به ری‌استارت
+  return ($code -eq 0 -or $code -eq 3010)
 }
 
 # نصب Git — دانلود مستقیم آخرین نصاب رسمی Git for Windows (نصاب InnoSetup)
@@ -169,29 +171,31 @@ if (-not (Test-Path (Join-Path $InstallDir ".git"))) {
 
 # ------------------------------------------------------------- ۴) استقرار با deploy.ps1 (install + اجرای خودکار)
 Write-Step "استقرار سامانه روی پورت $Port (نصب وابستگی‌ها + دیتابیس + build + اجرا)"
-$deployArgs = @{
-  Mode       = "install"
-  AppPort    = $Port
-  DbEngine   = $DbEngine
-  InstallDir = $InstallDir
-  DataDir    = $DataDir
-  AutoStart  = $true
-}
+$deployArgs = @(
+  "-Mode","install",
+  "-AppPort","$Port",
+  "-DbEngine",$DbEngine,
+  "-InstallDir",$InstallDir,
+  "-DataDir",$DataDir,
+  "-AutoStart"
+)
 if ($DbEngine -eq "mysql") {
-  $deployArgs.MysqlHost     = $MysqlHost
-  $deployArgs.MysqlPort     = $MysqlPort
-  $deployArgs.MysqlUser     = $MysqlUser
-  $deployArgs.MysqlPassword = $MysqlPassword
-  $deployArgs.MysqlDatabase = $MysqlDatabase
+  $deployArgs += @(
+    "-MysqlHost",$MysqlHost,
+    "-MysqlPort","$MysqlPort",
+    "-MysqlUser",$MysqlUser,
+    "-MysqlPassword",$MysqlPassword,
+    "-MysqlDatabase",$MysqlDatabase
+  )
 }
 
 $deployScript = Join-Path $InstallDir "deploy.ps1"
 if (-not (Test-Path $deployScript)) { Write-Fail "deploy.ps1 در مخزن پیدا نشد" }
 
 $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-try { & $deployScript @deployArgs; $deployOk = ($LASTEXITCODE -ne 1) } catch {
-  Write-Host $_.Exception.Message -ForegroundColor Red; $deployOk = $false
-}
+# اجرا در پروسهٔ جداگانه — تا «exit 1» داخل deploy.ps1 کل اسکریپت را نبندد
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$deployScript" @deployArgs
+$deployOk = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = $prevEAP
 
 # ------------------------------------------------------------- ۵) بنر پایانی

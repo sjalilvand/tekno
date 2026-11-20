@@ -107,6 +107,15 @@ if (Test-Path $dotenvPath) {
       $mPort = [regex]::Match($rawEnv, '(?m)^\s*PORT\s*=\s*"?(\d+)"?')
       if ($mPort.Success) { $AppPort = [int]$mPort.Groups[1].Value }
     }
+    # حفظ موتور دیتابیس نصب قبلی — تا «-Mode update» بدون -DbEngine فایل .env
+    # سامانهٔ SQLite را با آدرس MySQL بازنویسی نکند
+    if (-not $PSBoundParameters.ContainsKey('DbEngine')) {
+      $mDb = [regex]::Match($rawEnv, 'DATABASE_URL\s*=\s*"?([^"\r\n]+)"?')
+      if ($mDb.Success) {
+        if ($mDb.Groups[1].Value -like 'file:*') { $DbEngine = "sqlite" }
+        elseif ($mDb.Groups[1].Value -match '^(mysql|mariadb)://') { $DbEngine = "mysql" }
+      }
+    }
   }
 }
 
@@ -636,7 +645,15 @@ switch ($Mode) {
     $appVersion = "۶.۲۰"
     try {
       $pkgJson = Get-Content (Join-Path $InstallDir "package.json") -Raw | ConvertFrom-Json
-      if ($pkgJson.version) { $appVersion = $pkgJson.version -replace '\.', '٫' }
+      if ($pkgJson.version) {
+        # تبدیل ارقام لاتین به فارسی (سازگار با PowerShell 5.1)
+        $sb = New-Object System.Text.StringBuilder
+        foreach ($ch in "$($pkgJson.version)".ToCharArray()) {
+          if ($ch -ge '0' -and $ch -le '9') { [void]$sb.Append("۰۱۲۳۴۵۶۷۸۹"[[int]::Parse("$ch")]) }
+          else { [void]$sb.Append($ch) }
+        }
+        $appVersion = $sb.ToString()
+      }
     } catch {}
     Write-Host "═══════════════════════════════════════════════" -ForegroundColor Cyan
     Write-Host "  استقرار کامل شد — مرکز مشاوره رز (راه زندگی) نسخهٔ $appVersion" -ForegroundColor Cyan
