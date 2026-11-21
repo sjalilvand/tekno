@@ -1,4 +1,32 @@
-# مرکز مشاوره رز — نسخه ۶.۲۳
+# مرکز مشاوره رز — نسخه ۶.۲۴
+
+جدید در ۶.۲۴ — رفع «استقرار کامل شد ولی دیتا وارد نشد» + سخت‌سازی درون‌ریز برای پشتیبان واقعی:
+- **باگ ریشه‌ای (سرور واقعی)**: `server.ps1` مخزن را فقط وقتی وجود نداشت کلون می‌کرد — مخزنِ موجود
+  هرگز `git pull` نمی‌شد؛ پس `deploy.ps1` قدیمیِ روی سرور (نسخهٔ ۶.۲۲ که `-SqlFile` را در install
+  نادیده می‌گرفت) اجرا می‌شد و پیام «دیتای پشتیبان کامل وارد شد» فقط از سرِ banner جدید می‌آمد.
+  دیتای واقعی هیچ‌وقت وارد نشده بود (اسکرین‌شات کاربر: کاربر=۳، جلسه=۰).
+- **server.ps1**: پیش از اجرای deploy، سه بار `git fetch origin main` + `reset --hard origin/main`
+  (فقط وقتی fetch موفق بود) — همان سیاست Get-Source؛ در نبود اینترنت با هشدار ادامه می‌دهد.
+  به‌علاوه اگر deploy.ps1 محلی `Invoke-SqlFileImport` نداشت (نسخهٔ خیلی قدیمی)، از CDN jsdelivr
+  تازه می‌شود تا `-SqlFile` هیچ‌وقت بی‌صدا نادیده گرفته نشود.
+- **scripts/import-mysqldump.mjs — تحلیل واقعی با database_structure.txt (۷۵ جدول، ~۵.۹ میلیون ردیف)**:
+  - تحلیل تطبیق ستون‌ها: جدول‌های Users/SMS/Sessions/Messages/Centers/Groups/Helps/Events بدون
+    alias یا بدون fill، «همهٔ ردیف‌ها» شکست می‌خوردند (passwordHash/senderId/token/title و…)
+  - `COLUMN_ALIASES`: users.password→passwordHash، sms.smssender→senderId، sms.smsreceiver→receiverId،
+    sessions.key→token، centers.centertitle→title، messages.fromuid→fromUserId، messages.touid→toUserId،
+    log.uid→userId، events.corporatecontractserviceid→contractServiceId، events.ems→isEms،
+    helps.file_1→fileUrl، consultanteducation.univesity→university
+  - `TABLE_ALIASES`: eventreferrs→EventReferral، corporatecontractcoupons→CorporateContractCoupon،
+    equipmentitems→EquipmentItem، centercategories→CenterCategory (بر اساس اسکیمای واقعی app2)
+  - پر کردن امن ستون‌های NOT-NULL بی‌منبع در dump (متن ''، عدد ۰، تاریخ صفر → SENTINEL) —
+    برای ۳۱ جدولی که ستون‌هایشان در ساختار مستند نشده ضروری بود
+  - رفع `_binary '...'` و `X'...'`: اسکن توکن در فاصله متوقف می‌شود و معرفی‌ستِ charset قورت داده نمی‌شود
+  - INSERT [IGNORE] INTO پشتیبانی شد؛ مقدار فقط داخل پرانتزِ ردیف جمع می‌شود (متن غریبهٔ
+    میان دستورها هیچ‌وقت مقدار ذخیره نمی‌شود)
+- **تست**: `scripts/test-v624.mjs` — ۴۴ چک سبز (dump واقع‌نمایانهٔ ۱۲ جدول: alias جدول/ستون،
+  escapeها، تاریخ صفر، _binary، X''، INSERT IGNORE تکراری، پرش legacy، truncate، dry-run) +
+  رگرسیون ۱۲ چک ۶.۱۹ سبز + بنچمارک ۳۰۰هزار ردیف در ۵.۵ ثانیه (~۵۴هزار ردیف/ثانیه)
+- نسخهٔ برند: ۶.۲۴.۰ — کش PWA به rz-v6.24
 
 جدید در ۶.۲۳ — بازنویسی کامل «به‌روزرسانی دیتا از پشتیبان MySQL» بدون نیاز به نصب MySQL:
 - **مشکل**: حالت قبلی (`server.ps1 -SqlFile`) برای وارد کردن پشتیبان، MySQL سرور را دانلود می‌کرد

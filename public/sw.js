@@ -5,7 +5,7 @@
 //   - ناوبری صفحات: Network-First با fallback به کش
 //   - فراخوانی‌های API: همیشه شبکه (بدون کش — داده زنده)
 // =====================================================================
-const VERSION = "rz-v6.23";
+const VERSION = "rz-v6.24";
 const STATIC_CACHE = `${VERSION}-static`;
 const PAGE_CACHE = `${VERSION}-pages`;
 

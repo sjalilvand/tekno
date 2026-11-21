@@ -1,5 +1,5 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار یک‌فرمانی روی سرور ویندوزی (نسخه ۶.۲۳)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار یک‌فرمانی روی سرور ویندوزی (نسخه ۶.۲۴)
 #  برای ویندوز سرور ۲۰۲۵ (و ۲۰۱۶ به بعد) — PowerShell را «به‌صورت Administrator» باز کنید:
 #
 #    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sjalilvand/tekno/main/server.ps1" -OutFile "$env:TEMP\server.ps1"
@@ -207,6 +207,32 @@ if (-not (Test-Path (Join-Path $InstallDir ".git"))) {
   Write-Ok "مخزن در $InstallDir کلون شد"
 } else {
   Write-Ok "مخزن از قبل در $InstallDir موجود است"
+  # ------------------------------------------------ به‌روزرسانی کد پیش از اجرای deploy.ps1 (نسخهٔ ۶.۲۴)
+  # درون‌ریزی پشتیبان فقط با deploy.ps1 نسخهٔ جدید کار می‌کند؛ اسکریپتِ در حال اجرا همان
+  # نسخهٔ محلی است — اگر کد قدیمی باشد -SqlFile بی‌صدا نادیده گرفته می‌شد (باگ واقعی ۶.۲۳
+  # روی سرور: استقرار کامل شد ولی دیتا وارد نشد). پس اول کد از GitHub تازه می‌شود.
+  $prevGit = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+  $fetchOk = $false
+  foreach ($i in 1..3) {
+    & git -C $InstallDir fetch origin main 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { $fetchOk = $true; break }
+    if ($i -lt 3) { Write-Warn2 "اتصال به GitHub برقرار نشد (تلاش $i از ۳)…"; Start-Sleep -Seconds 2 }
+  }
+  if ($fetchOk) {
+    # فقط وقتی fetch موفق بود reset کن — وگرنه نسخهٔ محلی دست‌نخورده می‌ماند (.env و node_modules از قبل gitignore هستند)
+    & git -C $InstallDir reset --hard origin/main 2>&1 | Out-Null
+    $gitCode = $LASTEXITCODE
+  }
+  $ErrorActionPreference = $prevGit
+  if ($fetchOk -and $gitCode -eq 0) {
+    $commit = ""
+    try { $c = & git -C $InstallDir rev-parse --short HEAD 2>$null; if ($LASTEXITCODE -eq 0 -and $c) { $commit = "$c".Trim() } } catch {}
+    Write-Ok "کد سامانه به‌روزرسانی شد (نسخهٔ $commit)"
+  } else {
+    Write-Warn2 "به‌روزرسانی کد از GitHub انجام نشد — ادامه با کد محلی موجود"
+    Write-Host "  برای به‌روزرسانی دستی deploy.ps1 (بدون نیاز به گیت):" -ForegroundColor Yellow
+    Write-Host "    Invoke-WebRequest -UseBasicParsing -Uri 'https://cdn.jsdelivr.net/gh/sjalilvand/tekno@main/deploy.ps1' -OutFile '$InstallDir\deploy.ps1'" -ForegroundColor Yellow
+  }
 }
 
 # ------------------------------------------------------------- ۳.۵) فایل پشتیبان — فقط اعتبارسنجی مسیر (۶.۲۳)
@@ -220,6 +246,21 @@ if ($SqlFile) {
   $SqlFile = $sqlResolved.Path
   $sizeGB = [Math]::Round((Get-Item $SqlFile).Length / 1GB, 2)
   Write-Ok "فایل پشتیبان: $SqlFile ($sizeGB گیگابایت) — پس از استقرار، دیتا با درون‌ریز داخلی Node وارد SQLite می‌شود (بدون MySQL)"
+  # محافظ نسخهٔ deploy.ps1 — اگر نسخهٔ محلی قدیمی باشد -SqlFile را نادیده می‌گرفت؛
+  # از CDN تازه می‌شود (jsdelivr برای IP ایران هم در دسترس است)
+  $deployScriptPath = Join-Path $InstallDir "deploy.ps1"
+  if (Test-Path $deployScriptPath) {
+    $deployText = Get-Content $deployScriptPath -Raw -ErrorAction SilentlyContinue
+    if ($deployText -and ($deployText -notmatch 'Invoke-SqlFileImport')) {
+      Write-Warn2 "deploy.ps1 محلی قدیمی است (درون‌ریزی پشتیبان ندارد) — نسخهٔ جدید از CDN دریافت می‌شود…"
+      try {
+        Invoke-WebRequest -UseBasicParsing -Uri "https://cdn.jsdelivr.net/gh/sjalilvand/tekno@main/deploy.ps1" -OutFile $deployScriptPath -TimeoutSec 60
+        Write-Ok "deploy.ps1 به نسخهٔ جدید به‌روزرسانی شد"
+      } catch {
+        Write-Fail "به‌روزرسانی deploy.ps1 ممکن نشد: $($_.Exception.Message) — اینترنت را بررسی و دوباره اجرا کنید"
+      }
+    }
+  }
 }
 
 # ------------------------------------------------------------- ۴) استقرار با deploy.ps1 (install + درون‌ریزی پشتیبان + اجرای خودکار)

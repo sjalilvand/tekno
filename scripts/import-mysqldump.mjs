@@ -159,7 +159,12 @@ function loadTargetSchema() {
     const cols = new Map();
     const order = [];
     for (const c of info) {
-      const col = { name: c.name, type: (c.type || "TEXT").toUpperCase(), notnull: !!c.notnull, dflt: c.dflt_value };
+      const col = {
+        name: c.name, type: (c.type || "TEXT").toUpperCase(), notnull: !!c.notnull, dflt: c.dflt_value,
+        // NOT-NULL بدون مقدار پیش‌فرض و بدون کلید اصلی — اگر dump ستون متناظر نداشته باشد
+        // ردیف‌ها شکست می‌خورند؛ در importRows مقدار امن پر می‌شود (۶.۲۴)
+        notNullNoDefault: !!c.notnull && (c.dflt_value === null || c.dflt_value === undefined) && !c.pk,
+      };
       cols.set(c.name.toLowerCase(), col);
       order.push(c.name);
     }
@@ -168,11 +173,50 @@ function loadTargetSchema() {
 }
 if (!ARGS.dryRun) loadTargetSchema();
 
+// نام‌هایی که در پشتیبان واقعی (app2) جمع/تفریط متفاوتی با اسکیمای Prisma دارند
+const TABLE_ALIASES = new Map([
+  ["eventreferrs", "EventReferral"],
+  ["corporatecontractcoupons", "CorporateContractCoupon"],
+  ["equipmentitems", "EquipmentItem"],
+  ["centercategories", "CenterCategory"],
+]);
+
+// تغییرنام ستون‌ها بین پشتیبان قدیمی و اسکیمای جدید — کلید: "جدول.ستون_dump" (lowercase)
+// بدون این، ستون‌های NOT NULL بی‌مصدر کل جدول را می‌شکنند (Users/SMS/Sessions/Messages/Centers)
+const COLUMN_ALIASES = new Map([
+  ["users.password", "passwordHash"],
+  ["sms.smssender", "senderId"],
+  ["sms.smsreceiver", "receiverId"],
+  ["sessions.key", "token"],
+  ["centers.centertitle", "title"],
+  ["messages.fromuid", "fromUserId"],
+  ["messages.touid", "toUserId"],
+  ["log.uid", "userId"],
+  ["events.corporatecontractserviceid", "contractServiceId"],
+  ["events.ems", "isEms"],
+  ["helps.file_1", "fileUrl"],
+  ["consultanteducation.univesity", "university"],
+]);
+
+// مقدار امن برای ستون NOT-NULL بدون منبع در dump
+function fillValueFor(col) {
+  const t = col.type || "";
+  if (t.includes("DATETIME") || t.includes("TIMESTAMP") || t === "DATE") return SENTINEL_MS;
+  if (t === "BOOLEAN" || t === "BOOL") return 0;
+  if (t === "BIGINT" || t.includes("INTEGER")) return 0;
+  if (t === "REAL" || t.includes("REAL") || t.includes("FLOA") || t.includes("DOUB")) return 0;
+  return "";
+}
+
 function mapDumpTable(dumpName) {
   if (ARGS.dryRun) return dumpName; // در dry-run همهٔ جدول‌ها به خودشان نگاشت می‌شوند
   if (targetTables.has(dumpName)) return dumpName;
   const ci = dumpName.toLowerCase();
   for (const [t] of targetTables) if (t.toLowerCase() === ci) return t;
+  if (TABLE_ALIASES.has(ci)) {
+    const alias = TABLE_ALIASES.get(ci);
+    if (targetTables.has(alias)) return alias;
+  }
   return null;
 }
 
@@ -269,17 +313,28 @@ function parseValues(body) {
         j = nq + 1;
         break;
       }
-      cur.push(out);
+      // رشته هم فقط داخل ردیف مقدار است — رشتهٔ غریبهٔ بین دستورها نادیده (۶.۲۴)
+      if (inRow) cur.push(out);
       i = j;
       continue;
     }
-    // مقدار بدون نقل‌قول: NULL / عدد / 0x hex
+    // مقدار بدون نقل‌قول: NULL / عدد / 0x hex / X'hex' / معرفی‌ستِ _charset
+    // نکتهٔ ۶.۲۴: اسکن توکن در فاصله هم متوقف می‌شود — تا معرفی‌ستِ «_binary '...'»
+    // کل رشتهٔ بعدی را قورت ندهد (باگ مقدارهای blob در پشتیبان واقعی)
     let j = i;
-    while (j < n && body[j] !== "," && body[j] !== ")" && body[j] !== ";" && body[j] !== "\n") j++;
+    while (j < n && body[j] !== "," && body[j] !== ")" && body[j] !== ";" && body[j] !== "\n" && body[j] !== " " && body[j] !== "\t" && body[j] !== "\r") j++;
     const tok = body.slice(i, j).trim();
-    if (tok.length) {
+    // فقط داخل پرانتزِ ردیف مقدار جمع می‌شود — متنِ غریبه میان دستورها (ادغام دستورهای
+    // بدون «;») به‌عنوان مقدار ذخیره نمی‌شود (سخت‌گیری ۶.۲۴)
+    if (tok.length && inRow) {
       if (/^NULL$/i.test(tok)) cur.push(null);
-      else if (/^_[A-Za-z0-9]+$/.test(tok)) { /* معرفی‌ستی_charset مثل _binary — رشتهٔ بعدی مقدار است */ }
+      else if (/^_[A-Za-z0-9]+$/.test(tok)) { /* معرفی‌ستِ charset مثل _binary — رشتهٔ بعدی مقدار است؛ حلقهٔ اصلی می‌خواند */ }
+      else if (/^[Xx]'([0-9a-fA-F]*)'$/.test(tok)) {
+        const hex = tok.slice(2, -1);
+        const bytes = new Uint8Array(hex.length >> 1);
+        for (let b = 0; b < bytes.length; b++) bytes[b] = parseInt(hex.substr(b * 2, 2), 16);
+        cur.push(bytes);
+      }
       else if (/^0x[0-9a-fA-F]+$/.test(tok)) {
         const hex = tok.slice(2);
         const bytes = new Uint8Array(hex.length >> 1);
@@ -399,10 +454,23 @@ function importRows(dumpName, targetName, dumpColNames, rows) {
   if (!colMap || st.colMapKey !== dumpColNames.join("|")) {
     colMap = [];
     const useNames = [];
+    const usedLower = new Set();
     for (const dc of dumpColNames) {
-      const tc = tt.cols.get(dc.toLowerCase());
-      if (tc) { colMap.push(tc); useNames.push(tc.name); }
+      let tc = tt.cols.get(dc.toLowerCase());
+      if (!tc) {
+        const aliasName = COLUMN_ALIASES.get(targetName.toLowerCase() + "." + dc.toLowerCase());
+        if (aliasName) tc = tt.cols.get(aliasName.toLowerCase());
+      }
+      if (tc) { colMap.push(tc); useNames.push(tc.name); usedLower.add(tc.name.toLowerCase()); }
       else { colMap.push(null); st.skippedCols.add(dumpName + "." + dc); }
+    }
+    // ستون‌های NOT-NULL بدون منبع در dump — مقدار ثابت امن (۶.۲۴)
+    st.fillCols = [];
+    for (const tc of tt.cols.values()) {
+      if (tc.notNullNoDefault && !usedLower.has(tc.name.toLowerCase())) {
+        st.fillCols.push(fillValueFor(tc));
+        useNames.push(tc.name);
+      }
     }
     st.colMap = colMap;
     st.useNames = useNames;
@@ -417,16 +485,18 @@ function importRows(dumpName, targetName, dumpColNames, rows) {
   const inTxn = st.inTxn;
   if (!inTxn) { db.exec("BEGIN"); st.inTxn = true; }
   try {
+    const fillCols = st.fillCols || [];
     for (const row of rows) {
       st.rows++;
-      // فقط ستون‌های نگاشت‌شده — طول آرایه باید با تعداد placeholderها برابر باشد
-      const vals = new Array(colMap.length);
+      // ستون‌های نگاشت‌شده + ستون‌های fill — طول آرایه باید با placeholderها برابر باشد
+      const vals = new Array(colMap.length + fillCols.length);
       let k = 0;
       for (let c = 0; c < colMap.length; c++) {
         const cm = colMap[c];
         if (!cm) continue;
         vals[k++] = convertValue(row[c], cm);
       }
+      for (let f = 0; f < fillCols.length; f++) vals[k++] = fillCols[f];
       try {
         stmt.run(...vals.slice(0, k));
         st.inserted++;
@@ -449,7 +519,7 @@ function processStatement(stmt) {
   const first = stmt.charCodeAt(0);
   // سریع‌ترین فیلتر — فقط INSERT/REPLACE/CREATE TABLE مهم‌اند
   if (first === 73 /* I */ || first === 82 /* R */) {
-    if (/^(INSERT|REPLACE)\s+INTO\s+/i.test(stmt)) processInsert(stmt);
+    if (/^(INSERT(?:\s+IGNORE)?|REPLACE)\s+INTO\s+/i.test(stmt)) processInsert(stmt);
     return;
   }
   if (first === 67 /* C */) {
@@ -471,8 +541,8 @@ function processCreate(stmt) {
 }
 
 function processInsert(stmt) {
-  // INSERT INTO `T` VALUES ... | INSERT INTO `T` (`a`,`b`) VALUES ...
-  const m = stmt.match(/^(?:INSERT|REPLACE)\s+INTO\s+`?([^`\s]+)`?\s*(\(([^)]*)\)\s*)?VALUES?\s*[\r\n]?\s*/i);
+  // INSERT [IGNORE] INTO `T` VALUES ... | INSERT [IGNORE] INTO `T` (`a`,`b`) VALUES ...
+  const m = stmt.match(/^(?:INSERT(?:\s+IGNORE)?|REPLACE)\s+INTO\s+`?([^`\s]+)`?\s*(\(([^)]*)\)\s*)?VALUES?\s*[\r\n]?\s*/i);
   if (!m) return;
   const dumpName = m[1];
   let dumpCols = null;
@@ -537,7 +607,7 @@ const filterTables = ARGS.tables ? new Set(ARGS.tables.split(",").map((s) => s.t
 let acc = "";
 let seenFirstLine = false;
 const MAX_ACC = 2 * 1024 * 1024 * 1024;
-const STMT_START_RE = /^(INSERT\s+INTO|REPLACE\s+INTO|CREATE\s+TABLE)\b/i;
+const STMT_START_RE = /^(INSERT(?:\s+IGNORE)?\s+INTO|REPLACE\s+INTO|CREATE\s+TABLE)\b/i;
 
 const rl = readline.createInterface({
   input: fs.createReadStream(SQL_PATH, { encoding: "utf8" }),
@@ -573,7 +643,7 @@ rl.on("line", (lineRaw) => {
     acc = "";
     try {
       if (filterTables) {
-        const nm = stmt.match(/^(?:INSERT|REPLACE)\s+INTO\s+`?([^`\s]+)`?/i)?.[1] ?? stmt.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([^`\s(]+)`?/i)?.[1];
+        const nm = stmt.match(/^(?:INSERT(?:\s+IGNORE)?|REPLACE)\s+INTO\s+`?([^`\s]+)`?/i)?.[1] ?? stmt.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([^`\s(]+)`?/i)?.[1];
         if (!nm || !filterTables.has(nm)) return;
       }
       processStatement(stmt);
