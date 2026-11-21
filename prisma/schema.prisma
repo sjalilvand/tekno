@@ -42,7 +42,9 @@ model City {
   id         Int      @id
   provinceId Int
   title      String
-  apiCode    Int?     @map("APICode")
+  // نسخهٔ ۶.۲۵: BigInt — کدهای API پشتیبان واقعی (مثل 2165064084 تبریز/ارومیه/اردبیل)
+  // از بازهٔ Int32 بیرون می‌زنند و Prisma با Int از خواندن ردیف سر باز می‌زد
+  apiCode    BigInt?  @map("APICode")
   province   Province @relation(fields: [provinceId], references: [id])
   centers    Center[]
 

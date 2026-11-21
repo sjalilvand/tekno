@@ -21,6 +21,8 @@
 //  • تاریخ‌ها با منطقهٔ زمانی Asia/Tehran تفسیر می‌شوند (--tz برای تغییر)
 //  • حالت پیش‌فرض truncate: دادهٔ قبلی همان جدول‌ها پاک و با پشتیبان جایگزین می‌شود
 //  • ردیف‌های خراب (مثلاً نقض کلید یکتا) کل کار را نمی‌اندازند — شمرده و گزارش می‌شوند
+//  • نسخهٔ ۶.۲۵: ستون‌های INTEGER که مقدارشان از بازهٔ Int32 بیرون می‌زند در گزارش
+//    هشدار می‌گیرند («باید BigInt شوند») — وگرنه Prisma هنگام خواندن ردیف خطا می‌دهد
 //
 //  اجرا:
 //    node scripts/import-mysqldump.mjs --sql "C:\rahe_zendegi\app2_backup_202611031659.sql" --db "C:\rahe_zendegi\data\app.sqlite"
@@ -455,15 +457,26 @@ function importRows(dumpName, targetName, dumpColNames, rows) {
     colMap = [];
     const useNames = [];
     const usedLower = new Set();
+    // نسخهٔ ۶.۲۵ — ستون‌های INTEGER هدف (نوع Prisma Int) برای آشکارسازی سرریز Int32
+    let kPos = 0;
+    const intCheck = [];
     for (const dc of dumpColNames) {
       let tc = tt.cols.get(dc.toLowerCase());
       if (!tc) {
         const aliasName = COLUMN_ALIASES.get(targetName.toLowerCase() + "." + dc.toLowerCase());
         if (aliasName) tc = tt.cols.get(aliasName.toLowerCase());
       }
-      if (tc) { colMap.push(tc); useNames.push(tc.name); usedLower.add(tc.name.toLowerCase()); }
+      if (tc) {
+        colMap.push(tc); useNames.push(tc.name); usedLower.add(tc.name.toLowerCase());
+        const t = tc.type || "";
+        if ((t === "INTEGER" || t === "INT" || t.includes("INTEGER")) && !t.includes("BIGINT")) {
+          intCheck.push({ k: kPos, name: tc.name });
+        }
+        kPos++;
+      }
       else { colMap.push(null); st.skippedCols.add(dumpName + "." + dc); }
     }
+    st.intCheck = intCheck;
     // ستون‌های NOT-NULL بدون منبع در dump — مقدار ثابت امن (۶.۲۴)
     st.fillCols = [];
     for (const tc of tt.cols.values()) {
@@ -481,6 +494,7 @@ function importRows(dumpName, targetName, dumpColNames, rows) {
   if (!st.stmt) return;
 
   const stmt = st.stmt;
+  const intCheck = st.intCheck || [];
   // درج داخل تراکنش — سرعت + چسبندگی؛ خطای سطح ردیف تراکنش را نمی‌شکند
   const inTxn = st.inTxn;
   if (!inTxn) { db.exec("BEGIN"); st.inTxn = true; }
@@ -497,6 +511,19 @@ function importRows(dumpName, targetName, dumpColNames, rows) {
         vals[k++] = convertValue(row[c], cm);
       }
       for (let f = 0; f < fillCols.length; f++) vals[k++] = fillCols[f];
+      // نسخهٔ ۶.۲۵ — سرریز Int32 در ستون‌های Intِ Prisma → هشدار گزارش
+      for (let ci = 0; ci < intCheck.length; ci++) {
+        const v = vals[intCheck[ci].k];
+        if (v === null || v === undefined) continue;
+        const over = typeof v === "bigint"
+          ? (v > 2147483647n || v < -2147483648n)
+          : (v > 2147483647 || v < -2147483648);
+        if (!over) continue;
+        const absN = typeof v === "bigint" ? Number(v < 0n ? -v : v) : Math.abs(v);
+        const key = targetName + "\u0000" + intCheck[ci].name;
+        const prev = int32Overflow.get(key);
+        if (!prev || absN > prev.max) int32Overflow.set(key, { table: targetName, column: intCheck[ci].name, max: absN });
+      }
       try {
         stmt.run(...vals.slice(0, k));
         st.inserted++;
@@ -575,6 +602,8 @@ function processInsert(stmt) {
 }
 
 const skippedTables = new Map();
+// نسخهٔ ۶.۲۵ — ستون‌های Int با مقدار خارج از بازهٔ Int32 (باید در اسکیما BigInt شوند)
+const int32Overflow = new Map();
 
 function showProgress(force) {
   if (ARGS.quiet) return;
@@ -703,6 +732,7 @@ function finish() {
     totals,
     tables: tablesOut,
     skippedTables: [...skippedTables].map(([dump, reason]) => ({ dump, reason })),
+    int32Overflow: [...int32Overflow.values()].sort((a, b) => b.max - a.max),
   };
   if (ARGS.report) {
     try {
@@ -735,6 +765,12 @@ function finish() {
   for (const [, st] of tableStats) for (const c of st.skippedCols) skippedCols.add(c);
   if (skippedCols.size) {
     console.log(`  ⚠ ستون‌های پشتیبان که در ساختار جدید جایی نداشتند (${skippedCols.size}): ${[...skippedCols].slice(0, 10).join(", ")}${skippedCols.size > 10 ? " …" : ""}`);
+  }
+  if (int32Overflow.size) {
+    const list = [...int32Overflow.values()].sort((a, b) => b.max - a.max);
+    console.log(`  ⚠ ستون‌های Int با مقدار بزرگ‌تر از بازهٔ Int32 (${list.length}) — Prisma این ستون‌ها را نمی‌خواند؛ در prisma/schema.prisma به BigInt تبدیل شوند:`);
+    for (const o of list.slice(0, 10)) console.log(`    • ${o.table}.${o.column} (بیشینهٔ مطلق: ${o.max.toLocaleString("en-US")})`);
+    if (list.length > 10) console.log(`    … و ${list.length - 10} مورد دیگر`);
   }
   const errTables = tablesOut.filter((t) => t.failed > 0);
   if (errTables.length) {

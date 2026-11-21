@@ -39,7 +39,8 @@ model City {
   id         Int      @id
   provinceId Int
   title      String @db.Text
-  apiCode    Int?     @map("APICode")
+  // نسخهٔ ۶.۲۵: BigInt — هماهنگ با schema.prisma (کد API پشتیبان واقعی > Int32)
+  apiCode    BigInt?  @map("APICode")
   province   Province @relation(fields: [provinceId], references: [id])
   centers    Center[]
 

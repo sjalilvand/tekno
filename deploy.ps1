@@ -1,5 +1,9 @@
 ﻿# =====================================================================
-#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۲۳)
+#  مرکز مشاوره رز (سامانه راه زندگی) — استقرار خودکار روی ویندوز (نسخه ۶.۲۵)
+#  تغییرات ۶.۲۵: همگام‌سازی همیشه‌گانهٔ اسکیمای SQLite در همهٔ حالت‌ها (db push حتی
+#  روی دیتابیس موجود) — تا تغییر نوع ستون‌ها در اسکیما (Int→BigInt برای APICode
+#  پشتیبان واقعی، کدهایی مثل 2165064084 که از Int32 بیرون می‌زنند و صفحهٔ اطلس رز
+#  را با «does not fit in an INT column» می‌شکستند) بدون درون‌ریزی مجدد اعمال شود.
 #  تغییرات ۶.۲۳: به‌روزرسانی دیتا از پشتیبان MySQL «بدون نیاز به نصب MySQL» —
 #  درون‌ریز جریانی داخلی Node (scripts/import-mysqldump.mjs) پشتیبان‌های چند گیگابایتی
 #  (خروجی mysqldump مثل app2_backup_202611031659.sql) را مستقیماً در SQLite سامانه
@@ -433,12 +437,20 @@ function Invoke-PrismaSetup {
   Write-Step "آماده‌سازی SQLite"
   Invoke-Native { npx prisma generate 2>&1 | Out-Null }
   if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "prisma generate ناموفق بود" }
-  if (-not (Test-Path (Get-SqlitePath))) {
-    $env:DATABASE_URL = "file:" + ((Get-SqlitePath) -replace '\\','/')
-    Invoke-Native { npx prisma db push --accept-data-loss 2>&1 | Out-Null }
-    Write-Ok "دیتابیس SQLite جدید ساخته شد: $(Get-SqlitePath)"
+  $dbFile = Get-SqlitePath
+  $existed = Test-Path $dbFile
+  # نسخهٔ ۶.۲۵: db push همیشه اجرا می‌شود — پیش‌تر فقط برای دیتابیس تازه بود و
+  # تغییر نوع ستون‌ها در اسکیما (مثل Int→BigInt برای APICode پشتیبان واقعی) روی
+  # دیتابیس موجود هرگز اعمال نمی‌شد و صفحاتی مثل اطلس رز با «does not fit in an
+  # INT column» از کار می‌افتادند. db push وقتی اسکیمای هدف با دیتابیس هم‌خوان
+  # باشد سریع است و روی جدول‌های تغییرکرده فقط بازسازی با حفظ داده انجام می‌دهد.
+  $env:DATABASE_URL = "file:" + ($dbFile -replace '\\','/')
+  Invoke-Native { npx prisma db push --accept-data-loss 2>&1 | Out-Null }
+  if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Fail "prisma db push ناموفق بود — پیام بالا را بررسی کنید" }
+  if ($existed) {
+    Write-Ok "ساختار دیتابیس موجود با اسکیمای جدید همگام شد: $dbFile"
   } else {
-    Write-Ok "از دیتابیس موجود استفاده می‌شود: $(Get-SqlitePath)"
+    Write-Ok "دیتابیس SQLite جدید ساخته شد: $dbFile"
   }
   Pop-Location
 }
